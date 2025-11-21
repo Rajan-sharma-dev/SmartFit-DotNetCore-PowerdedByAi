@@ -1,0 +1,74 @@
+### SmartFit Identity Service API Tests
+
+@baseUrl = https://localhost:7000
+@contentType = application/json
+
+### 1. Register a new user
+POST {{baseUrl}}/api/auth/register
+Content-Type: {{contentType}}
+
+{
+    "username": "testuser2",
+    "email": "testuser2@example.com",
+    "password": "Password123!",
+    "confirmPassword": "Password123!",
+    "fullName": "Test User 2",
+    "phoneNumber": "+1234567890"
+}
+
+### 2. Login with the new user
+POST {{baseUrl}}/api/auth/login
+Content-Type: {{contentType}}
+
+{
+    "email": "testuser2@example.com",
+    "password": "Password123!"
+}
+
+### Store the token from login response
+@token = {{login.response.body.token}}
+
+### 3. Get current user info
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer {{token}}
+
+### 4. Change password
+POST {{baseUrl}}/api/auth/change-password
+Authorization: Bearer {{token}}
+Content-Type: {{contentType}}
+
+{
+    "currentPassword": "Password123!",
+    "newPassword": "NewPassword123!",
+    "confirmNewPassword": "NewPassword123!"
+}
+
+### 5. Login with admin user
+POST {{baseUrl}}/api/auth/login
+Content-Type: {{contentType}}
+
+{
+    "email": "admin@smartfit.com",
+    "password": "Admin123!"
+}
+
+### 6. Validate token
+POST {{baseUrl}}/api/auth/validate-token
+Content-Type: {{contentType}}
+
+"{{token}}"
+
+### 7. Refresh token (using cookie or body)
+POST {{baseUrl}}/api/auth/refresh-token
+Content-Type: {{contentType}}
+
+### 8. Logout
+POST {{baseUrl}}/api/auth/logout
+Authorization: Bearer {{token}}
+
+### 9. Test Dynamic Service with Authentication
+POST {{baseUrl}}/api/services/UserService/GetAllUsersAsync
+Authorization: Bearer {{token}}
+Content-Type: {{contentType}}
+
+{}

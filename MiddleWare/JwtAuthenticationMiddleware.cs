@@ -1,46 +1,90 @@
-﻿namespace MiddleWareWebApi.MiddleWare
+﻿using System.Security.Claims;
+using MiddleWareWebApi.Services;
+
+namespace MiddleWareWebApi.MiddleWare
 {
-    // C#
     public class JwtAuthenticationMiddleware
     {
         private readonly RequestDelegate _next;
-        private readonly string _jwtSecret;
+        private readonly IJwtTokenService _jwtTokenService;
+        private readonly ILogger<JwtAuthenticationMiddleware> _logger;
 
-        public JwtAuthenticationMiddleware(RequestDelegate next, IConfiguration config)
+        public JwtAuthenticationMiddleware(
+            RequestDelegate next, 
+            IJwtTokenService jwtTokenService,
+            ILogger<JwtAuthenticationMiddleware> logger)
         {
             _next = next;
-            _jwtSecret = config["Jwt:Secret"];
+            _jwtTokenService = jwtTokenService;
+            _logger = logger;
         }
 
         public async Task InvokeAsync(HttpContext context)
         {
-            var token = context.Request.Headers["Authorization"].FirstOrDefault()?.Split(" ").Last();
-            if (token != null)
+            try
             {
-                var principal = JwtUtils.ValidateToken(token, _jwtSecret);
-                if (principal != null)
-                    context.User = principal;
+                var token = ExtractTokenFromRequest(context);
+                
+                if (!string.IsNullOrEmpty(token))
+                {
+                    var principal = _jwtTokenService.GetPrincipalFromToken(token);
+                    if (principal != null)
+                    {
+                        context.User = principal;
+                        
+                        // Add user details to context items for easy access in services
+                        var userId = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                        var username = principal.FindFirst(ClaimTypes.Name)?.Value;
+                        var email = principal.FindFirst(ClaimTypes.Email)?.Value;
+                        var role = principal.FindFirst(ClaimTypes.Role)?.Value;
+                        var fullName = principal.FindFirst("FullName")?.Value;
+
+                        context.Items["UserId"] = userId;
+                        context.Items["Username"] = username;
+                        context.Items["UserEmail"] = email;
+                        context.Items["UserRole"] = role;
+                        context.Items["UserFullName"] = fullName;
+                        context.Items["IsAuthenticated"] = true;
+
+                        _logger.LogDebug("User {UserId} authenticated successfully", userId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Invalid JWT token provided");
+                        context.Items["IsAuthenticated"] = false;
+                    }
+                }
+                else
+                {
+                    context.Items["IsAuthenticated"] = false;
+                }
             }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in JWT authentication middleware");
+                context.Items["IsAuthenticated"] = false;
+            }
+
             await _next(context);
         }
 
-        public static class JwtUtils
+        private static string? ExtractTokenFromRequest(HttpContext context)
         {
-            public static System.Security.Claims.ClaimsPrincipal? ValidateToken(string token, string secret)
+            // Check Authorization header first
+            var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
+            if (!string.IsNullOrEmpty(authHeader) && authHeader.StartsWith("Bearer "))
             {
-                // TODO: Implement JWT validation logic here.
-                // For now, return null to indicate invalid token.
-                if (string.IsNullOrEmpty(token))
-                {
-                    return null;
-                }
-                // In a real implementation, validate the token and return the ClaimsPrincipal.
-                return new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(new[]
-                {
-                    new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, "TestUser")
-                }, "Jwt"));
+                return authHeader.Substring("Bearer ".Length).Trim();
             }
+
+            // Check query parameter as fallback
+            var tokenFromQuery = context.Request.Query["token"].FirstOrDefault();
+            if (!string.IsNullOrEmpty(tokenFromQuery))
+            {
+                return tokenFromQuery;
+            }
+
+            return null;
         }
     }
-
 }
