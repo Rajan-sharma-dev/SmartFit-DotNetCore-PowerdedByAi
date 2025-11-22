@@ -33,12 +33,14 @@ namespace MiddleWareWebApi.Controllers
                 if (response == null)
                     return Unauthorized(new { message = "Invalid email or password" });
 
+                // 🔐 Set JWT token in HTTP-only cookie (automatic for all future requests)
+                SetJwtTokenCookie(response.Token, response.Expires);
                 SetRefreshTokenCookie(response.RefreshToken);
 
                 return Ok(new
                 {
                     message = "Login successful",
-                    token = response.Token,
+                    // Don't send token in response body - it's in cookie
                     expires = response.Expires,
                     user = response.User
                 });
@@ -64,12 +66,14 @@ namespace MiddleWareWebApi.Controllers
                 if (response == null)
                     return BadRequest(new { message = "User with this email or username already exists" });
 
+                // 🔐 Set JWT token in HTTP-only cookie (automatic for all future requests)
+                SetJwtTokenCookie(response.Token, response.Expires);
                 SetRefreshTokenCookie(response.RefreshToken);
 
                 return Ok(new
                 {
                     message = "Registration successful",
-                    token = response.Token,
+                    // Don't send token in response body - it's in cookie
                     expires = response.Expires,
                     user = response.User
                 });
@@ -82,11 +86,12 @@ namespace MiddleWareWebApi.Controllers
         }
 
         [HttpPost("refresh-token")]
-        public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest? request = null)
+        public async Task<IActionResult> RefreshToken()
         {
             try
             {
-                var refreshToken = request?.RefreshToken ?? Request.Cookies["refreshToken"];
+                // Get refresh token from cookie
+                var refreshToken = Request.Cookies["refreshToken"];
                 
                 if (string.IsNullOrEmpty(refreshToken))
                     return BadRequest(new { message = "Refresh token is required" });
@@ -97,12 +102,13 @@ namespace MiddleWareWebApi.Controllers
                 if (response == null)
                     return Unauthorized(new { message = "Invalid or expired refresh token" });
 
+                // 🔐 Update JWT token in HTTP-only cookie
+                SetJwtTokenCookie(response.Token, response.Expires);
                 SetRefreshTokenCookie(response.RefreshToken);
 
                 return Ok(new
                 {
                     message = "Token refreshed successfully",
-                    token = response.Token,
                     expires = response.Expires,
                     user = response.User
                 });
@@ -111,32 +117,6 @@ namespace MiddleWareWebApi.Controllers
             {
                 _logger.LogError(ex, "Error during token refresh");
                 return StatusCode(500, new { message = "An error occurred during token refresh" });
-            }
-        }
-
-        [HttpPost("revoke-token")]
-        [Authorize]
-        public async Task<IActionResult> RevokeToken([FromBody] RefreshTokenRequest? request = null)
-        {
-            try
-            {
-                var refreshToken = request?.RefreshToken ?? Request.Cookies["refreshToken"];
-                
-                if (string.IsNullOrEmpty(refreshToken))
-                    return BadRequest(new { message = "Refresh token is required" });
-
-                var ipAddress = GetIpAddress();
-                var success = await _identityService.RevokeTokenAsync(refreshToken, ipAddress);
-
-                if (!success)
-                    return BadRequest(new { message = "Invalid refresh token" });
-
-                return Ok(new { message = "Token revoked successfully" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error during token revocation");
-                return StatusCode(500, new { message = "An error occurred during token revocation" });
             }
         }
 
@@ -153,8 +133,8 @@ namespace MiddleWareWebApi.Controllers
                     await _identityService.LogoutAsync(refreshToken);
                 }
 
-                // Clear refresh token cookie
-                Response.Cookies.Delete("refreshToken");
+                // 🔐 Clear all authentication cookies
+                ClearAuthenticationCookies();
 
                 return Ok(new { message = "Logout successful" });
             }
@@ -162,6 +142,29 @@ namespace MiddleWareWebApi.Controllers
             {
                 _logger.LogError(ex, "Error during logout");
                 return StatusCode(500, new { message = "An error occurred during logout" });
+            }
+        }
+
+        [HttpGet("me")]
+        [Authorize]
+        public async Task<IActionResult> GetCurrentUser()
+        {
+            try
+            {
+                var userId = GetCurrentUserId();
+                if (userId == null)
+                    return Unauthorized();
+
+                var user = await _identityService.GetUserByIdAsync(userId.Value);
+                if (user == null)
+                    return NotFound(new { message = "User not found" });
+
+                return Ok(user);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting current user");
+                return StatusCode(500, new { message = "An error occurred while getting user information" });
             }
         }
 
@@ -192,42 +195,20 @@ namespace MiddleWareWebApi.Controllers
             }
         }
 
-        [HttpGet("me")]
-        [Authorize]
-        public async Task<IActionResult> GetCurrentUser()
+        // 🔐 Set JWT token in HTTP-only cookie (automatic authentication)
+        private void SetJwtTokenCookie(string token, DateTime expires)
         {
-            try
+            var cookieOptions = new CookieOptions
             {
-                var userId = GetCurrentUserId();
-                if (userId == null)
-                    return Unauthorized();
+                HttpOnly = true,  // Prevents JavaScript access (XSS protection)
+                Secure = true,    // HTTPS only (set to false for development HTTP)
+                SameSite = SameSiteMode.Strict, // CSRF protection
+                Expires = expires,
+                Path = "/",
+                IsEssential = true
+            };
 
-                var user = await _identityService.GetUserByIdAsync(userId.Value);
-                if (user == null)
-                    return NotFound(new { message = "User not found" });
-
-                return Ok(user);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting current user");
-                return StatusCode(500, new { message = "An error occurred while getting user information" });
-            }
-        }
-
-        [HttpPost("validate-token")]
-        public async Task<IActionResult> ValidateToken([FromBody] string token)
-        {
-            try
-            {
-                var isValid = await _identityService.ValidateTokenAsync(token);
-                return Ok(new { isValid });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error validating token");
-                return StatusCode(500, new { message = "An error occurred while validating token" });
-            }
+            Response.Cookies.Append("accessToken", token, cookieOptions);
         }
 
         private void SetRefreshTokenCookie(string refreshToken)
@@ -235,12 +216,34 @@ namespace MiddleWareWebApi.Controllers
             var cookieOptions = new CookieOptions
             {
                 HttpOnly = true,
-                Expires = DateTime.UtcNow.AddDays(7),
+                Secure = true, // Set to false for development HTTP
                 SameSite = SameSiteMode.Strict,
-                Secure = true // Set to true in production with HTTPS
+                Expires = DateTime.UtcNow.AddDays(7),
+                Path = "/",
+                IsEssential = true
             };
 
             Response.Cookies.Append("refreshToken", refreshToken, cookieOptions);
+        }
+
+        // 🔐 Clear all authentication cookies
+        private void ClearAuthenticationCookies()
+        {
+            Response.Cookies.Delete("accessToken", new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true, // Set to false for development HTTP
+                SameSite = SameSiteMode.Strict,
+                Path = "/"
+            });
+
+            Response.Cookies.Delete("refreshToken", new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true, // Set to false for development HTTP
+                SameSite = SameSiteMode.Strict,
+                Path = "/"
+            });
         }
 
         private string GetIpAddress()

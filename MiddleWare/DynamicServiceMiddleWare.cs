@@ -20,8 +20,6 @@ namespace MiddleWareWebApi.MiddleWare
 
         public async Task InvokeAsync(HttpContext context, IServiceProvider serviceProvider)
         {
-            // Principal is automatically available in context.User after authentication
-            // No need to manually extract or pass user details - services get them automatically
             var segments = context.Request.Path.Value?.Split('/');
             var reader = new StreamReader(context.Request.Body, leaveOpen: true);
             var jsonBody = await reader.ReadToEndAsync();
@@ -30,14 +28,40 @@ namespace MiddleWareWebApi.MiddleWare
             {
                 var serviceName = segments[4];
                 var method = segments[5];
+                var serviceMethodKey = $"{serviceName}.{method}";
 
-                // Log the service call with user info (if authenticated)
-                var userId = context.User.Identity?.IsAuthenticated == true
-                    ? context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "Unknown"
-                    : "Anonymous";
+                // 🔓🔒 Check if this is a public service using centralized config
+                var isPublicService = PublicServicesConfig.IsPublicService(serviceName, method);
+                
+                // 🔒 Check authentication for protected services
+                if (!isPublicService)
+                {
+                    var isAuthenticated = context.User?.Identity?.IsAuthenticated == true;
+                    
+                    if (!isAuthenticated)
+                    {
+                        _logger.LogWarning("Unauthenticated access attempt to protected service: {ServiceName}.{Method}", 
+                            serviceName, method);
+                        
+                        context.Response.StatusCode = 401;
+                        await context.Response.WriteAsJsonAsync(new
+                        {
+                            error = "Authentication required",
+                            message = "You must be logged in to access this service",
+                            service = serviceMethodKey,
+                            accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
+                        });
+                        return;
+                    }
+                }
 
-                _logger.LogInformation("Calling service: {ServiceName}.{Method} for user: {UserId}", 
-                    serviceName, method, userId);
+                // Log the service call with appropriate user info
+                var userId = isPublicService 
+                    ? "Anonymous" 
+                    : context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "Unknown";
+
+                _logger.LogInformation("Calling service: {ServiceName}.{Method} for user: {UserId} ({AccessLevel})", 
+                    serviceName, method, userId, PublicServicesConfig.GetServiceAccessDescription(serviceName, method));
 
                 var serviceType = Type.GetType($"MiddleWareWebApi.Services.{serviceName}");
                 if (serviceType != null)
@@ -59,7 +83,6 @@ namespace MiddleWareWebApi.MiddleWare
                                 var param = parameters[i];
 
                                 // Skip parameters that are dependency injected (like ICurrentUserService)
-                                // These will be handled by the DI container automatically
                                 if (IsServiceParameter(param.ParameterType))
                                 {
                                     continue; // Let DI handle this parameter
@@ -77,7 +100,9 @@ namespace MiddleWareWebApi.MiddleWare
                                             context.Response.StatusCode = 400;
                                             await context.Response.WriteAsJsonAsync(new
                                             {
-                                                error = $"Missing required parameter '{param.Name}' in request body."
+                                                error = $"Missing required parameter '{param.Name}' in request body.",
+                                                service = serviceMethodKey,
+                                                accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
                                             });
                                             return;
                                         }
@@ -104,7 +129,9 @@ namespace MiddleWareWebApi.MiddleWare
                                                     await context.Response.WriteAsJsonAsync(new
                                                     {
                                                         error = $"Validation failed for parameter '{param.Name}'",
-                                                        details = results.Select(r => r.ErrorMessage)
+                                                        details = results.Select(r => r.ErrorMessage),
+                                                        service = serviceMethodKey,
+                                                        accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
                                                     });
                                                     return;
                                                 }
@@ -123,7 +150,9 @@ namespace MiddleWareWebApi.MiddleWare
                                     context.Response.StatusCode = 400;
                                     await context.Response.WriteAsJsonAsync(new
                                     {
-                                        error = $"Missing required parameter '{param.Name}'"
+                                        error = $"Missing required parameter '{param.Name}'",
+                                        service = serviceMethodKey,
+                                        accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
                                     });
                                     return;
                                 }
@@ -136,50 +165,58 @@ namespace MiddleWareWebApi.MiddleWare
                         {
                             try
                             {
-                                // Services automatically have access to Principal via ICurrentUserService
-                                // No need to manually pass user context
+                                // 🔓🔒 Call service (public or protected)
                                 var result = args.Length == 0 
                                     ? methodInfo.Invoke(service, null)
                                     : methodInfo.Invoke(service, args);
                                 
                                 context.Items["ResponseData"] = result;
 
-                                _logger.LogInformation("Service call completed successfully: {ServiceName}.{Method} for user: {UserId}", 
-                                    serviceName, method, userId);
+                                _logger.LogInformation("Service call completed successfully: {ServiceName}.{Method} for user: {UserId} ({AccessLevel})", 
+                                    serviceName, method, userId, PublicServicesConfig.GetServiceAccessDescription(serviceName, method));
                             }
                             catch (System.Reflection.TargetInvocationException tex) when (tex.InnerException != null)
                             {
-                                // Unwrap the inner exception for better error handling
                                 var innerException = tex.InnerException;
                                 
                                 if (innerException is UnauthorizedAccessException)
                                 {
-                                    context.Response.StatusCode = 403; // Forbidden
+                                    context.Response.StatusCode = 403;
                                     await context.Response.WriteAsJsonAsync(new
                                     {
                                         error = "Access denied",
-                                        message = innerException.Message
+                                        message = innerException.Message,
+                                        service = serviceMethodKey,
+                                        accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
                                     });
                                     return;
                                 }
 
-                                _logger.LogError(innerException, "Error invoking service method: {ServiceName}.{Method}", serviceName, method);
+                                _logger.LogError(innerException, "Error invoking service method: {ServiceName}.{Method} ({AccessLevel})", 
+                                    serviceName, method, PublicServicesConfig.GetServiceAccessDescription(serviceName, method));
+                                
                                 context.Response.StatusCode = 500;
                                 await context.Response.WriteAsJsonAsync(new
                                 {
                                     error = "An error occurred while processing your request",
-                                    details = innerException.Message
+                                    details = innerException.Message,
+                                    service = serviceMethodKey,
+                                    accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
                                 });
                                 return;
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogError(ex, "Error invoking service method: {ServiceName}.{Method}", serviceName, method);
+                                _logger.LogError(ex, "Error invoking service method: {ServiceName}.{Method} ({AccessLevel})", 
+                                    serviceName, method, PublicServicesConfig.GetServiceAccessDescription(serviceName, method));
+                                
                                 context.Response.StatusCode = 500;
                                 await context.Response.WriteAsJsonAsync(new
                                 {
                                     error = "An error occurred while processing your request",
-                                    details = ex.Message
+                                    details = ex.Message,
+                                    service = serviceMethodKey,
+                                    accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
                                 });
                                 return;
                             }
@@ -204,7 +241,6 @@ namespace MiddleWareWebApi.MiddleWare
                     {
                         error = $"Service type '{serviceName}' not found"
                     });
-                    context.Response.StatusCode = 404;
                     return;
                 }
             }
@@ -215,7 +251,6 @@ namespace MiddleWareWebApi.MiddleWare
         // Helper method to identify service parameters that should be dependency injected
         private static bool IsServiceParameter(Type parameterType)
         {
-            // Check if it's a service interface or service class
             return parameterType.Name.StartsWith("I") && parameterType.IsInterface ||
                    parameterType.Name.EndsWith("Service") ||
                    parameterType == typeof(IServiceProvider) ||
@@ -224,8 +259,7 @@ namespace MiddleWareWebApi.MiddleWare
         }
     }
 
-    // Keep UserContext for backward compatibility, but it's no longer needed
-    // Services now use ICurrentUserService which accesses Principal directly
+    // Keep UserContext for backward compatibility
     public class UserContext
     {
         public string? UserId { get; set; }

@@ -1,4 +1,4 @@
-// C#
+﻿// C#
 using MiddleWareWebApi;
 using MiddleWareWebApi.data;
 using MiddleWareWebApi.MiddleWare;
@@ -27,13 +27,21 @@ var jwtSettings = builder.Configuration.GetSection("JwtSettings").Get<JwtSetting
 builder.Services.AddSingleton<DapperContext>();
 
 // Services - Principal is automatically available through ICurrentUserService
-builder.Services.AddScoped<ICurrentUserService, CurrentUserService>(); // Key service for Principal access
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<TaskService>();
 builder.Services.AddScoped<IIdentityService, IdentityService>();
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 
-// JWT Authentication
+// ?? Configure Cookie Policy for automatic token management
+builder.Services.Configure<CookiePolicyOptions>(options =>
+{
+    options.CheckConsentNeeded = context => false; // Disable consent for essential cookies
+    options.MinimumSameSitePolicy = SameSiteMode.Strict;
+    options.Secure = CookieSecurePolicy.Always; // Set to SameAsRequest for development HTTP
+});
+
+// JWT Authentication (supports both cookies and headers)
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -44,20 +52,20 @@ builder.Services.AddAuthentication(options =>
 {
     options.RequireHttpsMetadata = false; // Set to true in production
     options.SaveToken = true;
-    options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        ValidIssuer = jwtSettings?.Issuer,
-        ValidAudience = jwtSettings?.Audience,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings?.SecretKey ?? "")),
-        ClockSkew = TimeSpan.Zero
-    };
-
+    
+    // ?? Configure to read JWT from both cookies and headers
     options.Events = new JwtBearerEvents
     {
+        OnMessageReceived = context =>
+        {
+            // Try to get token from cookie first (automatic)
+            var token = context.Request.Cookies["accessToken"];
+            if (!string.IsNullOrEmpty(token))
+            {
+                context.Token = token;
+            }
+            return Task.CompletedTask;
+        },
         OnAuthenticationFailed = context =>
         {
             context.Response.StatusCode = 401;
@@ -74,6 +82,18 @@ builder.Services.AddAuthentication(options =>
             return context.Response.WriteAsync(result);
         }
     };
+
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwtSettings?.Issuer,
+        ValidAudience = jwtSettings?.Audience,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings?.SecretKey ?? "")),
+        ClockSkew = TimeSpan.Zero
+    };
 });
 
 // Authorization
@@ -83,15 +103,20 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("UserOrAdmin", policy => policy.RequireRole("User", "Admin"));
 });
 
-// CORS (if needed for frontend integration)
+// CORS (configured for multiple frameworks)
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowSpecificOrigins", policy =>
+    options.AddPolicy("AllowMultipleFrameworks", policy =>
     {
-        policy.WithOrigins("http://localhost:3000", "https://localhost:3000") // Add your frontend URLs
+        policy.WithOrigins(
+                "http://localhost:3000",  // ← React App
+                "http://localhost:8080",  // ← Vue App
+                "https://localhost:3000", // ← HTTPS versions
+                "https://localhost:8080"
+              )
               .AllowAnyHeader()
               .AllowAnyMethod()
-              .AllowCredentials();
+              .AllowCredentials(); // 🔐 Required for cookies
     });
 });
 
@@ -105,7 +130,10 @@ if (app.Environment.IsDevelopment())
 }
 
 // Enable CORS
-app.UseCors("AllowSpecificOrigins");
+app.UseCors("AllowMultipleFrameworks");
+
+// ?? Use Cookie Policy (for automatic token management)
+app.UseCookiePolicy();
 
 // Add middleware in correct order
 app.UseMiddleware<ErrorHandlingMiddleware>();
