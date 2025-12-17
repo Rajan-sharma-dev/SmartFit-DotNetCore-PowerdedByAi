@@ -4,6 +4,7 @@ using System.Text.Json;
 using Azure;
 using Newtonsoft.Json.Linq;
 using System.Security.Claims;
+using MiddleWareWebApi.Models.Identity;
 
 namespace MiddleWareWebApi.MiddleWare
 {
@@ -146,8 +147,16 @@ namespace MiddleWareWebApi.MiddleWare
                                 continue; // Let DI handle this parameter
                             }
 
+                            if (param.ParameterType == typeof(PrincipalDto))
+                            {
+                                var principal = context.Items["Principal"] as ClaimsPrincipal ?? context.User;
+                                nameValue = principal;
+                                _logger.LogDebug("Auto-injected ClaimsPrincipal for parameter: {ParameterName} in {ServiceMethod}",
+                                    param.Name, serviceMethodKey);
+                            }
+
                             // 🌐 Special handling for IP address parameter in IdentityService methods
-                            if (param.Name.Equals("ipAddress", StringComparison.OrdinalIgnoreCase) && 
+                            else if (param.Name.Equals("ipAddress", StringComparison.OrdinalIgnoreCase) && 
                                 param.ParameterType == typeof(string))
                             {
                                 nameValue = GetIpAddress(context);

@@ -290,33 +290,52 @@ namespace ConsoleApp1.Services
                     throw new InvalidOperationException("Script file is empty");
                 }
 
+                _logger.LogInformation($"Executing script: {Path.GetFileName(scriptPath)}");
+                _logger.LogDebug($"Script content length: {sqlContent.Length} characters");
+
                 using var connection = CreateConnection();
                 await connection.OpenAsync();
 
                 // Split the script by GO statements or semicolons for better compatibility
                 var commands = SplitSqlCommands(sqlContent);
+                
+                _logger.LogInformation($"Split script into {commands.Count} commands");
 
                 using var transaction = await connection.BeginTransactionAsync();
 
                 try
                 {
-                    foreach (var commandText in commands)
+                    for (int i = 0; i < commands.Count; i++)
                     {
+                        var commandText = commands[i];
                         if (string.IsNullOrWhiteSpace(commandText)) continue;
+
+                        _logger.LogInformation($"Executing command {i + 1}/{commands.Count}: {commandText.Substring(0, Math.Min(100, commandText.Length))}...");
 
                         using var command = connection.CreateCommand();
                         command.Transaction = transaction;
                         command.CommandText = commandText.Trim();
                         
-                        await command.ExecuteNonQueryAsync();
+                        try
+                        {
+                            await command.ExecuteNonQueryAsync();
+                            _logger.LogInformation($"Command {i + 1} executed successfully");
+                        }
+                        catch (Exception cmdEx)
+                        {
+                            _logger.LogError(cmdEx, $"Failed to execute command {i + 1}: {commandText}");
+                            throw;
+                        }
                     }
 
                     await transaction.CommitAsync();
                     result.IsSuccess = true;
+                    _logger.LogInformation($"Script {Path.GetFileName(scriptPath)} executed successfully");
                 }
                 catch
                 {
                     await transaction.RollbackAsync();
+                    _logger.LogWarning($"Transaction rolled back for script: {Path.GetFileName(scriptPath)}");
                     throw;
                 }
             }

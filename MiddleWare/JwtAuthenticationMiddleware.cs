@@ -1,5 +1,7 @@
-﻿using System.Security.Claims;
+﻿using MiddleWareWebApi.Models;
 using MiddleWareWebApi.Services;
+using MiddleWareWebApi.Services.Interfaces;
+using System.Security.Claims;
 
 namespace MiddleWareWebApi.MiddleWare
 {
@@ -39,32 +41,21 @@ namespace MiddleWareWebApi.MiddleWare
                     
                     if (!string.IsNullOrEmpty(token))
                     {
-                        var principal = jwtTokenService.GetPrincipalFromToken(token);
+                        var identityService = serviceProvider.GetRequiredService<IIdentityService>();
+                        var principal = await identityService.GetUserByTokenAsync(token);
+                        
                         if (principal != null)
                         {
-                            // Enhance existing context.User from ASP.NET Core authentication
-                            context.User = principal;
-                            
-                            // Add user details to context items for easy access in services
-                            var userId = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-                            var username = principal.FindFirst(ClaimTypes.Name)?.Value;
-                            var email = principal.FindFirst(ClaimTypes.Email)?.Value;
-                            var role = principal.FindFirst(ClaimTypes.Role)?.Value;
-                            var fullName = principal.FindFirst("FullName")?.Value;
+                            // Enhance context with JWT information
+                            context.Items["Principal"] = principal;
 
-                            context.Items["UserId"] = userId;
-                            context.Items["Username"] = username;
-                            context.Items["UserEmail"] = email;
-                            context.Items["UserRole"] = role;
-                            context.Items["UserFullName"] = fullName;
-                            context.Items["IsAuthenticated"] = true;
-
-                            _logger.LogDebug("User {UserId} authenticated successfully for protected service", userId);
+                            _logger.LogDebug("User {UserId} authenticated successfully", principal.UserId);
                         }
                         else
                         {
-                            _logger.LogWarning("Invalid JWT token provided for protected service");
+                            // Invalid token
                             context.Items["IsAuthenticated"] = false;
+                            _logger.LogDebug("Invalid JWT token provided for public service");
                         }
                     }
                     else
@@ -96,32 +87,23 @@ namespace MiddleWareWebApi.MiddleWare
                 
                 if (!string.IsNullOrEmpty(token))
                 {
-                    var principal = jwtTokenService.GetPrincipalFromToken(token);
+                    var identityService = serviceProvider.GetRequiredService<IIdentityService>();
+                    var principal = await identityService.GetUserByTokenAsync(token);
+
                     if (principal != null)
                     {
-                        // Even for public services, if user has valid token, enhance the context
-                        context.User = principal;
-                        
-                        var userId = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-                        var username = principal.FindFirst(ClaimTypes.Name)?.Value;
-                        var email = principal.FindFirst(ClaimTypes.Email)?.Value;
-                        var role = principal.FindFirst(ClaimTypes.Role)?.Value;
-                        var fullName = principal.FindFirst("FullName")?.Value;
+                        // Enhance context with JWT information
+                        context.Items["Principal"] = principal;
 
-                        context.Items["UserId"] = userId;
-                        context.Items["Username"] = username;
-                        context.Items["UserEmail"] = email;
-                        context.Items["UserRole"] = role;
-                        context.Items["UserFullName"] = fullName;
-                        context.Items["IsAuthenticated"] = true;
-
-                        _logger.LogDebug("Enhanced public service call with user context: {UserId}", userId);
+                        _logger.LogDebug("User {UserId} authenticated successfully", principal.UserId);
                     }
-                    else if (required)
+                    else
                     {
-                        _logger.LogWarning("Invalid JWT token provided");
+                        // Invalid token
                         context.Items["IsAuthenticated"] = false;
+                        _logger.LogDebug("Invalid JWT token provided for public service");
                     }
+
                 }
                 else if (!required)
                 {

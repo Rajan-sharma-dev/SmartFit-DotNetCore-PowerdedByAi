@@ -7,7 +7,7 @@ using System.Security.Claims;
 namespace MiddleWareWebApi.Controllers
 {
     [ApiController]
-    [Route("api/[controller]")]
+    [Route("api/public/[controller]")]
     public class AuthController : ControllerBase
     {
         private readonly IIdentityService _identityService;
@@ -40,7 +40,7 @@ namespace MiddleWareWebApi.Controllers
                 return Ok(new
                 {
                     message = "Login successful",
-                    // Don't send token in response body - it's in cookie
+                    accessToken = response.Token,
                     expires = response.Expires,
                     user = response.User
                 });
@@ -202,7 +202,7 @@ namespace MiddleWareWebApi.Controllers
             {
                 HttpOnly = true,  // Prevents JavaScript access (XSS protection)
                 Secure = true,    // HTTPS only (set to false for development HTTP)
-                SameSite = SameSiteMode.Strict, // CSRF protection
+                SameSite = SameSiteMode.None, // CSRF protection
                 Expires = expires,
                 Path = "/",
                 IsEssential = true
@@ -262,5 +262,34 @@ namespace MiddleWareWebApi.Controllers
             
             return null;
         }
+
+        [HttpGet("session-status")]
+        public async Task<IActionResult> GetSessionStatus()
+        {
+            try
+            {
+                var userId = GetCurrentUserId();
+                if (userId == null) return Ok(new { isLoggedIn = false });
+
+                var user = await _identityService.GetUserByIdAsync(userId.Value);
+
+                return Ok(new
+                {
+                    isLoggedIn = user != null,
+                    user = user,
+                    sessionInfo = new
+                    {
+                        loginTime = DateTime.UtcNow, // You can track this if needed
+                        ipAddress = GetIpAddress()
+                    }
+                });
+            }
+            catch
+            {
+                return Ok(new { isLoggedIn = false });
+            }
+        }
+
+        
     }
 }

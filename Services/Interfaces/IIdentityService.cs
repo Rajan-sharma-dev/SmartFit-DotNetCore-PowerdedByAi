@@ -13,5 +13,8 @@ namespace MiddleWareWebApi.Services.Interfaces
         Task<bool> ValidateTokenAsync(string token);
         Task<int?> GetUserIdFromTokenAsync(string token);
         Task<bool> LogoutAsync(string refreshToken);
+        Task<UserInfo?> GetUserByTokenAsync(string token);
+        Task<object> GetUserTokenStatus(PrincipalDto principal);
+        public int? GetCurrentUserIdFromPrincipal(PrincipalDto principal);
     }
 }

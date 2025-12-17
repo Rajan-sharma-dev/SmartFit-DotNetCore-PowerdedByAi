@@ -112,7 +112,8 @@ builder.Services.AddCors(options =>
                 "http://localhost:5173",  // ← React App
                 "http://localhost:8080",  // ← Vue App
                 "https://localhost:3000", // ← HTTPS versions
-                "https://localhost:8080"
+                "https://localhost:8080",
+                "http://localhost:5174"
               )
               .AllowAnyHeader()
               .AllowAnyMethod()
@@ -146,6 +147,11 @@ app.UseMiddleware<LoggingMiddleware>();
 app.UseAuthentication(); // This MUST come before custom JWT middleware
 app.UseAuthorization();
 
+app.MapWhen(context => context.Request.Path.StartsWithSegments("/api/public"), appBuilder =>
+{
+    appBuilder.UseRouting();
+    appBuilder.UseEndpoints(endpoints => endpoints.MapControllers());
+});
 // Custom middleware - Principal is now available in HttpContext.User
 app.UseMiddleware<JwtAuthenticationMiddleware>(); // This enhances the Principal with additional context
 app.UseMiddleware<TransformMiddleware>();

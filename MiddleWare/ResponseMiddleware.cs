@@ -41,21 +41,25 @@ namespace MiddleWareWebApi.MiddleWare
                     break;
 
                 case string str:
+                    context.Response.StatusCode = 200;
                     context.Response.ContentType = "text/plain";
                     await context.Response.WriteAsync(str);
                     break;
 
                 case byte[] bytes:
+                    context.Response.StatusCode = 200;
                     context.Response.ContentType = "application/octet-stream";
                     await context.Response.Body.WriteAsync(bytes, 0, bytes.Length);
                     break;
 
                 case Stream stream:
+                    context.Response.StatusCode = 200;
                     context.Response.ContentType = "application/octet-stream";
                     await stream.CopyToAsync(context.Response.Body);
                     break;
 
                 default:
+                    context.Response.StatusCode = 200;
                     context.Response.ContentType = "application/json";
                     await context.Response.WriteAsync(JsonSerializer.Serialize(result));
                     break;

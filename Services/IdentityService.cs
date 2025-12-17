@@ -100,9 +100,9 @@ namespace MiddleWareWebApi.Services
                 };
 
                 var sql = @"
-                    INSERT INTO Users (Username, Email,  FullName, PhoneNumber,CreatedAt, Password) 
+                    INSERT INTO Users (Username, Email,  FullName, PhoneNumber,CreatedAt, PasswordHash) 
                     OUTPUT INSERTED.UserId
-                    VALUES (@Username, @Email, @FullName, @PhoneNumber, @CreatedAt, @Password)";
+                    VALUES (@Username, @Email, @FullName, @PhoneNumber, @CreatedAt, @PasswordHash)";
                 try
                 {
                     var userId = await connection.QuerySingleAsync<int>(sql, user);
@@ -323,6 +323,226 @@ namespace MiddleWareWebApi.Services
                 Role = user.Role ?? "User",
                 IsActive = user.IsActive
             };
+        }
+
+        public async Task<UserInfo?> GetUserByTokenAsync(string token)
+        {
+            try
+            {
+                // First, validate the token and extract user ID
+                var userId = await GetUserIdFromTokenAsync(token);
+                if (userId == null)
+                {
+                    _logger.LogWarning("Unable to extract user ID from token");
+                    return null;
+                }
+
+                // Then get the full user information
+                var user = await GetUserByIdAsync(userId.Value);
+                if (user == null)
+                {
+                    _logger.LogWarning("User not found for ID: {UserId}", userId);
+                    return null;
+                }
+
+                _logger.LogDebug("Successfully retrieved user {UserId} from token", userId);
+                return user;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting user by token");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Checks if the current user's token is expired based on PrincipalDto
+        /// </summary>
+        /// <param name="principal">Auto-injected by middleware containing user info</param>
+        /// <returns>True if token is expired, False if token is still valid</returns>
+        public async Task<bool> IsTokenExpiredByUserId(PrincipalDto principal)
+        {
+            try
+            {
+                if (principal == null || !principal.IsAuthenticated)
+                {
+                    _logger.LogWarning("PrincipalDto is null or user is not authenticated");
+                    return true; // Not authenticated means expired
+                }
+
+                if (!principal.UserId.HasValue)
+                {
+                    _logger.LogWarning("UserId not found in PrincipalDto");
+                    return true; // No user ID means expired
+                }
+
+                // Check if user still exists and is active in database
+                using var connection = _context.CreateConnection();
+                var user = await connection.QueryFirstOrDefaultAsync<User>(
+                    "SELECT UserId, IsActive FROM Users WHERE UserId = @UserId",
+                    new { UserId = principal.UserId.Value });
+
+                if (user == null)
+                {
+                    _logger.LogWarning("User {UserId} not found in database", principal.UserId);
+                    return true; // User doesn't exist means token is invalid
+                }
+
+                if (!user.IsActive)
+                {
+                    _logger.LogWarning("User {UserId} is inactive", principal.UserId);
+                    return true; // Inactive user means token should be considered expired
+                }
+
+                // Check if there are any active refresh tokens for this user
+                var activeRefreshTokenCount = await connection.QuerySingleAsync<int>(
+                    "SELECT COUNT(*) FROM RefreshTokens WHERE UserId = @UserId AND IsRevoked = 0 AND ExpiresAt > @Now",
+                    new { UserId = principal.UserId.Value, Now = DateTime.UtcNow });
+
+                if (activeRefreshTokenCount == 0)
+                {
+                    _logger.LogWarning("No active refresh tokens found for user {UserId}", principal.UserId);
+                    return true; // No active refresh tokens means user should re-authenticate
+                }
+
+                _logger.LogDebug("Token is valid for user {UserId}", principal.UserId);
+                return false; // Token is valid
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error checking token expiration for user");
+                return true; // Error means expired for safety
+            }
+        }
+
+        /// <summary>
+        /// Gets detailed token status for the current user
+        /// </summary>
+        /// <param name="principal">Auto-injected by middleware</param>
+        /// <returns>Detailed token status information</returns>
+        public async Task<object> GetUserTokenStatus(PrincipalDto principal)
+        {
+            try
+            {
+                if (principal == null)
+                {
+                    return new
+                    {
+                        isValid = false,
+                        isExpired = true,
+                        error = "No principal data available",
+                        userId = (int?)null
+                    };
+                }
+
+                if (!principal.IsAuthenticated || !principal.UserId.HasValue)
+                {
+                    return new
+                    {
+                        isValid = false,
+                        isExpired = true,
+                        error = "User not authenticated",
+                        userId = principal.UserId,
+                        principalData = new
+                        {
+                            isAuthenticated = principal.IsAuthenticated,
+                            ipAddress = principal.IpAddress
+                        }
+                    };
+                }
+
+                using var connection = _context.CreateConnection();
+
+                // Check user status
+                var user = await connection.QueryFirstOrDefaultAsync<User>(
+                    "SELECT UserId, Username, Email, IsActive, CreatedAt FROM Users WHERE UserId = @UserId",
+                    new { UserId = principal.UserId.Value });
+
+                if (user == null)
+                {
+                    return new
+                    {
+                        isValid = false,
+                        isExpired = true,
+                        error = "User not found in database",
+                        userId = principal.UserId
+                    };
+                }
+
+                // Get active refresh tokens
+                var refreshTokens = await connection.QueryAsync<RefreshToken>(
+                    "SELECT Token, CreatedAt, ExpiresAt, CreatedByIp, IsRevoked FROM RefreshTokens WHERE UserId = @UserId ORDER BY CreatedAt DESC",
+                    new { UserId = principal.UserId.Value });
+
+                var activeTokens = refreshTokens.Where(rt => !rt.IsRevoked && rt.ExpiresAt > DateTime.UtcNow).ToList();
+                var isExpired = !user.IsActive || activeTokens.Count == 0;
+
+                return new
+                {
+                    isValid = !isExpired,
+                    isExpired = isExpired,
+                    userId = principal.UserId,
+                    userInfo = new
+                    {
+                        username = user.Username,
+                        email = user.Email,
+                        isActive = user.IsActive,
+                        memberSince = user.CreatedAt
+                    },
+                    principalInfo = new
+                    {
+                        role = principal.Role,
+                        email = principal.Email,
+                        ipAddress = principal.IpAddress,
+                        loginTime = principal.LoginTime,
+                        isAuthenticated = principal.IsAuthenticated
+                    },
+                    tokenInfo = new
+                    {
+                        totalRefreshTokens = refreshTokens.Count(),
+                        activeRefreshTokens = activeTokens.Count,
+                        latestTokenCreated = refreshTokens.FirstOrDefault()?.CreatedAt,
+                        nextTokenExpiry = activeTokens.OrderBy(rt => rt.ExpiresAt).FirstOrDefault()?.ExpiresAt
+                    },
+                    checkedAt = DateTime.UtcNow
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting user token status");
+                return new
+                {
+                    isValid = false,
+                    isExpired = true,
+                    error = ex.Message,
+                    userId = principal?.UserId
+                };
+            }
+        }
+
+        /// <summary>
+        /// Simple method that just returns the current user ID from PrincipalDto
+        /// </summary>
+        /// <param name="principal">Auto-injected by middleware</param>
+        /// <returns>Current user's ID</returns>
+        public int? GetCurrentUserIdFromPrincipal(PrincipalDto principal)
+        {
+            try
+            {
+                if (principal?.IsAuthenticated == true && principal.UserId.HasValue)
+                {
+                    _logger.LogDebug("Retrieved user ID {UserId} from PrincipalDto", principal.UserId);
+                    return principal.UserId;
+                }
+
+                _logger.LogWarning("Unable to get user ID from PrincipalDto - not authenticated or missing UserId");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting user ID from PrincipalDto");
+                return null;
+            }
         }
     }
 }
