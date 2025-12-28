@@ -26,7 +26,7 @@
             "UserService.CheckEmailExistsAsync",    // For registration validation
             "UserService.CreateUserAsync",          // For registration
             "UserService.UpdatePasswordAsync",      // For password reset
-            
+
             // 🔓 Health check services
             "HealthService.GetHealthStatusAsync",
             "SystemService.GetPublicInfoAsync",

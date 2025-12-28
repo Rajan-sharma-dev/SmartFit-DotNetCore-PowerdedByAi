@@ -47,29 +47,7 @@ namespace MiddleWareWebApi.MiddleWare
                 // 🔓🔒 Check if this is a public service using centralized config
                 var isPublicService = PublicServicesConfig.IsPublicService(serviceName, method);
 
-                // 🔒 Check authentication for protected services
-                if (!isPublicService)
-                {
-                    var isAuthenticated = context.User?.Identity?.IsAuthenticated == true;
-
-                    if (!isAuthenticated)
-                    {
-                        _logger.LogWarning("Unauthenticated access attempt to protected service: {ServiceName}.{Method}",
-                            serviceName, method);
-
-                        context.Response.StatusCode = 401;
-                        await context.Response.WriteAsJsonAsync(new
-                        {
-                            error = "Authentication required",
-                            message = "You must be logged in to access this service",
-                            service = serviceMethodKey,
-                            accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
-                        });
-                        return;
-                    }
-                }
-
-                // Log the service call with appropriate user info
+                
                 var userId = isPublicService
                     ? "Anonymous"
                     : context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "Unknown";

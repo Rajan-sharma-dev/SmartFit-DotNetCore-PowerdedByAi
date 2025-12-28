@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using MiddleWareWebApi.Services;
 using MiddleWareWebApi.Models;
+using MiddleWareWebApi.Models.Identity;
 
 namespace MiddleWareWebApi.Controllers
 {
@@ -23,12 +24,12 @@ namespace MiddleWareWebApi.Controllers
         /// Get current user's tasks - Principal automatically available
         /// </summary>
         [HttpGet]
-        public async Task<IActionResult> GetMyTasks()
+        public async Task<IActionResult> GetMyTasks(PrincipalDto principal)
         {
             try
             {
                 // Service automatically gets tasks for current user using Principal
-                var tasks = await _taskService.GetMyTasksAsync();
+                var tasks = await _taskService.GetMyTasksAsync(principal);
                 return Ok(tasks);
             }
             catch (UnauthorizedAccessException ex)

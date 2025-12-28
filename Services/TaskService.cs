@@ -1,6 +1,7 @@
 ﻿using MiddleWareWebApi.data;
 using MiddleWareWebApi.Models;
 using Dapper;
+using MiddleWareWebApi.Models.Identity;
 
 namespace MiddleWareWebApi.Services
 {
@@ -21,7 +22,7 @@ namespace MiddleWareWebApi.Services
         }
 
         // Get all tasks for the current user
-        public async Task<IEnumerable<TaskItem>> GetMyTasksAsync()
+        public async Task<IEnumerable<TaskItem>> GetMyTasksAsync(PrincipalDto principal )
         {
             if (!_currentUserService.IsAuthenticated)
             {
@@ -30,7 +31,7 @@ namespace MiddleWareWebApi.Services
 
             using var conn = _context.CreateConnection();
             var tasks = await conn.QueryAsync<TaskItem>(
-                "SELECT * FROM Tasks WHERE UserId = @UserId ORDER BY CreatedAt DESC",
+                "SELECT * FROM TaskItems WHERE UserId = @UserId ORDER BY Priority DESC, CreatedAt DESC",
                 new { UserId = _currentUserService.UserId });
 
             _logger.LogInformation("User {UserId} retrieved {TaskCount} tasks", 
@@ -54,7 +55,7 @@ namespace MiddleWareWebApi.Services
 
             using var conn = _context.CreateConnection();
             var tasks = await conn.QueryAsync<TaskItem>(
-                "SELECT * FROM Tasks ORDER BY CreatedAt DESC");
+                "SELECT * FROM TaskItems ORDER BY Priority DESC, CreatedAt DESC");
 
             _logger.LogInformation("Admin {UserId} retrieved all tasks ({TaskCount})", 
                 _currentUserService.UserId, tasks.Count());
@@ -77,15 +78,25 @@ namespace MiddleWareWebApi.Services
 
             using var conn = _context.CreateConnection();
             var sql = @"
-                INSERT INTO Tasks (Title, Description, IsCompleted, CreatedAt, UpdatedAt, UserId)
+                INSERT INTO TaskItems (
+                    Title, Description, IsCompleted, Priority, TaskType, Status,
+                    UserId, AssignedToUserId, AssignedToName, ProjectName, Category,
+                    DueDate, StartDate, ProgressPercentage, EstimatedHours, ActualHours,
+                    StoryPoints, SprintName, Tags, CreatedAt, UpdatedAt
+                )
                 OUTPUT INSERTED.Id
-                VALUES (@Title, @Description, @IsCompleted, @CreatedAt, @UpdatedAt, @UserId)";
+                VALUES (
+                    @Title, @Description, @IsCompleted, @Priority, @TaskType, @Status,
+                    @UserId, @AssignedToUserId, @AssignedToName, @ProjectName, @Category,
+                    @DueDate, @StartDate, @ProgressPercentage, @EstimatedHours, @ActualHours,
+                    @StoryPoints, @SprintName, @Tags, @CreatedAt, @UpdatedAt
+                )";
 
             var taskId = await conn.QuerySingleAsync<int>(sql, task);
             task.Id = taskId;
 
-            _logger.LogInformation("User {UserId} created task {TaskId}: {TaskTitle}", 
-                _currentUserService.UserId, taskId, task.Title);
+            _logger.LogInformation("User {UserId} created task {TaskId}: {TaskTitle} - Type: {TaskType}, Priority: {Priority}", 
+                _currentUserService.UserId, taskId, task.Title, task.TaskType, task.Priority);
 
             return task;
         }
@@ -102,7 +113,7 @@ namespace MiddleWareWebApi.Services
 
             // Check if task exists and get owner
             var existingTask = await conn.QueryFirstOrDefaultAsync<TaskItem>(
-                "SELECT * FROM Tasks WHERE Id = @Id", new { Id = task.Id });
+                "SELECT * FROM TaskItems WHERE Id = @Id", new { Id = task.Id });
 
             if (existingTask == null)
             {
@@ -124,17 +135,33 @@ namespace MiddleWareWebApi.Services
             task.CreatedAt = existingTask.CreatedAt;
 
             var sql = @"
-                UPDATE Tasks 
+                UPDATE TaskItems 
                 SET Title = @Title, 
                     Description = @Description, 
-                    IsCompleted = @IsCompleted, 
+                    IsCompleted = @IsCompleted,
+                    Priority = @Priority,
+                    TaskType = @TaskType,
+                    Status = @Status,
+                    AssignedToUserId = @AssignedToUserId,
+                    AssignedToName = @AssignedToName,
+                    ProjectName = @ProjectName,
+                    Category = @Category,
+                    DueDate = @DueDate,
+                    StartDate = @StartDate,
+                    CompletedDate = @CompletedDate,
+                    ProgressPercentage = @ProgressPercentage,
+                    EstimatedHours = @EstimatedHours,
+                    ActualHours = @ActualHours,
+                    StoryPoints = @StoryPoints,
+                    SprintName = @SprintName,
+                    Tags = @Tags,
                     UpdatedAt = @UpdatedAt
                 WHERE Id = @Id";
 
             var result = await conn.ExecuteAsync(sql, task);
 
-            _logger.LogInformation("Task {TaskId} updated by user {UserId}", 
-                task.Id, _currentUserService.UserId);
+            _logger.LogInformation("Task {TaskId} updated by user {UserId} - Priority: {Priority}, Status: {Status}", 
+                task.Id, _currentUserService.UserId, task.Priority, task.Status);
 
             return result > 0;
         }
@@ -151,7 +178,7 @@ namespace MiddleWareWebApi.Services
 
             // Check if task exists and get owner
             var existingTask = await conn.QueryFirstOrDefaultAsync<TaskItem>(
-                "SELECT * FROM Tasks WHERE Id = @Id", new { Id = taskId });
+                "SELECT * FROM TaskItems WHERE Id = @Id", new { Id = taskId });
 
             if (existingTask == null)
             {
@@ -167,7 +194,7 @@ namespace MiddleWareWebApi.Services
                 throw new UnauthorizedAccessException("You can only delete your own tasks");
             }
 
-            var result = await conn.ExecuteAsync("DELETE FROM Tasks WHERE Id = @Id", 
+            var result = await conn.ExecuteAsync("DELETE FROM TaskItems WHERE Id = @Id", 
                 new { Id = taskId });
 
             _logger.LogInformation("Task {TaskId} deleted by user {UserId}", 
@@ -186,7 +213,7 @@ namespace MiddleWareWebApi.Services
 
             using var conn = _context.CreateConnection();
             var task = await conn.QueryFirstOrDefaultAsync<TaskItem>(
-                "SELECT * FROM Tasks WHERE Id = @Id", new { Id = taskId });
+                "SELECT * FROM TaskItems WHERE Id = @Id", new { Id = taskId });
 
             if (task == null)
             {
@@ -217,7 +244,7 @@ namespace MiddleWareWebApi.Services
 
             // Check if task exists and get owner
             var existingTask = await conn.QueryFirstOrDefaultAsync<TaskItem>(
-                "SELECT * FROM Tasks WHERE Id = @Id", new { Id = taskId });
+                "SELECT * FROM TaskItems WHERE Id = @Id", new { Id = taskId });
 
             if (existingTask == null)
             {
@@ -231,11 +258,24 @@ namespace MiddleWareWebApi.Services
                 throw new UnauthorizedAccessException("You can only modify your own tasks");
             }
 
-            var newStatus = !existingTask.IsCompleted;
-            var result = await conn.ExecuteAsync(
-                "UPDATE Tasks SET IsCompleted = @IsCompleted, UpdatedAt = @UpdatedAt WHERE Id = @Id",
+            var newIsCompleted = !existingTask.IsCompleted;
+            var newStatus = newIsCompleted ? "Completed" : "Pending";
+            var newProgressPercentage = newIsCompleted ? 100 : existingTask.ProgressPercentage;
+            var completedDate = newIsCompleted ? DateTime.UtcNow : (DateTime?)null;
+
+            var result = await conn.ExecuteAsync(@"
+                UPDATE TaskItems 
+                SET IsCompleted = @IsCompleted, 
+                    Status = @Status,
+                    ProgressPercentage = @ProgressPercentage,
+                    CompletedDate = @CompletedDate,
+                    UpdatedAt = @UpdatedAt 
+                WHERE Id = @Id",
                 new { 
-                    IsCompleted = newStatus, 
+                    IsCompleted = newIsCompleted,
+                    Status = newStatus,
+                    ProgressPercentage = newProgressPercentage,
+                    CompletedDate = completedDate,
                     UpdatedAt = DateTime.UtcNow, 
                     Id = taskId 
                 });
@@ -256,10 +296,14 @@ namespace MiddleWareWebApi.Services
 
             using var conn = _context.CreateConnection();
             var tasks = await conn.QueryAsync<TaskItem>(@"
-                SELECT * FROM Tasks 
+                SELECT * FROM TaskItems 
                 WHERE UserId = @UserId 
-                AND (Title LIKE @SearchTerm OR Description LIKE @SearchTerm)
-                ORDER BY CreatedAt DESC",
+                AND (Title LIKE @SearchTerm 
+                     OR Description LIKE @SearchTerm 
+                     OR Tags LIKE @SearchTerm
+                     OR ProjectName LIKE @SearchTerm
+                     OR Category LIKE @SearchTerm)
+                ORDER BY Priority DESC, CreatedAt DESC",
                 new { 
                     UserId = _currentUserService.UserId, 
                     SearchTerm = $"%{searchTerm}%" 
@@ -284,15 +328,158 @@ namespace MiddleWareWebApi.Services
                 SELECT 
                     COUNT(*) as TotalTasks,
                     SUM(CASE WHEN IsCompleted = 1 THEN 1 ELSE 0 END) as CompletedTasks,
-                    SUM(CASE WHEN IsCompleted = 0 THEN 1 ELSE 0 END) as PendingTasks
-                FROM Tasks 
+                    SUM(CASE WHEN IsCompleted = 0 THEN 1 ELSE 0 END) as PendingTasks,
+                    SUM(CASE WHEN Priority = 'Critical' THEN 1 ELSE 0 END) as CriticalTasks,
+                    SUM(CASE WHEN Priority = 'High' THEN 1 ELSE 0 END) as HighPriorityTasks,
+                    SUM(CASE WHEN Status = 'InProgress' THEN 1 ELSE 0 END) as InProgressTasks,
+                    SUM(CASE WHEN DueDate IS NOT NULL AND DueDate < GETUTCDATE() AND Status != 'Completed' THEN 1 ELSE 0 END) as OverdueTasks,
+                    AVG(CAST(ProgressPercentage AS FLOAT)) as AverageProgress
+                FROM TaskItems 
                 WHERE UserId = @UserId",
                 new { UserId = _currentUserService.UserId });
 
-            _logger.LogInformation("User {UserId} retrieved task statistics", 
+            _logger.LogInformation("User {UserId} retrieved enhanced task statistics", 
                 _currentUserService.UserId);
 
             return stats;
+        }
+
+        // Get filtered tasks for AI Command Interpreter
+        public async Task<IEnumerable<TaskItem>> GetTasksWithFiltersAsync(
+            string? status = null, 
+            string? priority = null, 
+            string? taskType = null, 
+            string? assignedToName = null,
+            string? projectName = null,
+            bool? isOverdue = null)
+        {
+            if (!_currentUserService.IsAuthenticated)
+            {
+                throw new UnauthorizedAccessException("Authentication required");
+            }
+
+            using var conn = _context.CreateConnection();
+            
+            var whereClauses = new List<string> { "UserId = @UserId" };
+            var parameters = new Dictionary<string, object> { { "UserId", _currentUserService.UserId } };
+
+            if (!string.IsNullOrEmpty(status))
+            {
+                whereClauses.Add("Status = @Status");
+                parameters.Add("Status", status);
+            }
+
+            if (!string.IsNullOrEmpty(priority))
+            {
+                whereClauses.Add("Priority = @Priority");
+                parameters.Add("Priority", priority);
+            }
+
+            if (!string.IsNullOrEmpty(taskType))
+            {
+                whereClauses.Add("TaskType = @TaskType");
+                parameters.Add("TaskType", taskType);
+            }
+
+            if (!string.IsNullOrEmpty(assignedToName))
+            {
+                whereClauses.Add("AssignedToName LIKE @AssignedToName");
+                parameters.Add("AssignedToName", $"%{assignedToName}%");
+            }
+
+            if (!string.IsNullOrEmpty(projectName))
+            {
+                whereClauses.Add("ProjectName LIKE @ProjectName");
+                parameters.Add("ProjectName", $"%{projectName}%");
+            }
+
+            if (isOverdue == true)
+            {
+                whereClauses.Add("DueDate IS NOT NULL AND DueDate < GETUTCDATE() AND Status != 'Completed'");
+            }
+
+            var whereClause = string.Join(" AND ", whereClauses);
+            var sql = $@"
+                SELECT * FROM TaskItems 
+                WHERE {whereClause}
+                ORDER BY 
+                    CASE Priority 
+                        WHEN 'Critical' THEN 1
+                        WHEN 'High' THEN 2
+                        WHEN 'Medium' THEN 3
+                        WHEN 'Low' THEN 4
+                        ELSE 5
+                    END,
+                    CASE WHEN DueDate IS NOT NULL THEN 0 ELSE 1 END,
+                    DueDate ASC,
+                    CreatedAt DESC";
+
+            var tasks = await conn.QueryAsync<TaskItem>(sql, parameters);
+
+            _logger.LogInformation("User {UserId} retrieved {Count} filtered tasks - Status: {Status}, Priority: {Priority}, Type: {TaskType}", 
+                _currentUserService.UserId, tasks.Count(), status, priority, taskType);
+
+            return tasks;
+        }
+
+        // Update task status and related fields (for AI Command Interpreter)
+        public async Task<bool> UpdateTaskStatusAsync(int taskId, string newStatus, string? newPriority = null, string? assignedToName = null)
+        {
+            if (!_currentUserService.IsAuthenticated)
+            {
+                throw new UnauthorizedAccessException("Authentication required");
+            }
+
+            using var conn = _context.CreateConnection();
+
+            // Check if task exists and get owner
+            var existingTask = await conn.QueryFirstOrDefaultAsync<TaskItem>(
+                "SELECT * FROM TaskItems WHERE Id = @Id", new { Id = taskId });
+
+            if (existingTask == null)
+            {
+                return false;
+            }
+
+            // Users can only update their own tasks unless they're admin
+            if (!_currentUserService.IsInRole("Admin") && 
+                existingTask.UserId != _currentUserService.UserId)
+            {
+                throw new UnauthorizedAccessException("You can only modify your own tasks");
+            }
+
+            // Determine values to update
+            var isCompleted = newStatus.Equals("Completed", StringComparison.OrdinalIgnoreCase);
+            var progressPercentage = isCompleted ? 100 : existingTask.ProgressPercentage;
+            var completedDate = isCompleted ? DateTime.UtcNow : (DateTime?)null;
+            var priority = newPriority ?? existingTask.Priority;
+            var assignee = assignedToName ?? existingTask.AssignedToName;
+
+            var result = await conn.ExecuteAsync(@"
+                UPDATE TaskItems 
+                SET Status = @Status,
+                    Priority = @Priority,
+                    AssignedToName = @AssignedToName,
+                    IsCompleted = @IsCompleted,
+                    ProgressPercentage = @ProgressPercentage,
+                    CompletedDate = @CompletedDate,
+                    UpdatedAt = @UpdatedAt
+                WHERE Id = @Id",
+                new { 
+                    Status = newStatus,
+                    Priority = priority,
+                    AssignedToName = assignee,
+                    IsCompleted = isCompleted,
+                    ProgressPercentage = progressPercentage,
+                    CompletedDate = completedDate,
+                    UpdatedAt = DateTime.UtcNow,
+                    Id = taskId 
+                });
+
+            _logger.LogInformation("Task {TaskId} status updated to {Status} by user {UserId}", 
+                taskId, newStatus, _currentUserService.UserId);
+
+            return result > 0;
         }
     }
 }
