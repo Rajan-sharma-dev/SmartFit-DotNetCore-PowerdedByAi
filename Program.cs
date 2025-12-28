@@ -11,6 +11,9 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Add environment variables to configuration
+builder.Configuration.AddEnvironmentVariables();
+
 // Add services to the container
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -26,12 +29,23 @@ var jwtSettings = builder.Configuration.GetSection("JwtSettings").Get<JwtSetting
 // Database Context
 builder.Services.AddSingleton<DapperContext>();
 
+// Configure OpenAI Settings
+builder.Services.Configure<OpenAiSettings>(builder.Configuration.GetSection("OpenAi"));
+
+// Add HttpClient for OpenAI Services
+builder.Services.AddHttpClient<IOpenAiService, OpenAiService>();
+builder.Services.AddHttpClient<IOpenAiProjectService, OpenAiProjectService>();
+builder.Services.AddHttpClient<IAiCommandInterpreter, AiCommandInterpreter>();
+
 // Services - Principal is automatically available through ICurrentUserService
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<TaskService>();
 builder.Services.AddScoped<IIdentityService, IdentityService>();
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+builder.Services.AddScoped<IOpenAiService, OpenAiService>();
+builder.Services.AddScoped<IOpenAiProjectService, OpenAiProjectService>();
+builder.Services.AddScoped<IAiCommandInterpreter, AiCommandInterpreter>();
 
 // ?? Configure Cookie Policy for automatic token management
 builder.Services.Configure<CookiePolicyOptions>(options =>

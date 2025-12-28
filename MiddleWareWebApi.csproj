@@ -23,7 +23,6 @@
     <Folder Include="DatabaseMigrations\" />
     <Folder Include="SmartFitDatabaseTool\" />
     <Folder Include="SmartFitMigrationTool\" />
-    <Folder Include="wwwroot\" />
   </ItemGroup>
 
 </Project>

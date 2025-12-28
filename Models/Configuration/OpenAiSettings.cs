@@ -2,7 +2,7 @@ namespace MiddleWareWebApi.Models.Configuration
 {
     public class OpenAiSettings
     {
-        public string ApiKey { get; set; } = "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";
+        public string ApiKey { get; set; } = "your-openai-api-key-here";
         public string BaseUrl { get; set; } = "https://api.openai.com/v1";
         public string DefaultModel { get; set; } = "gpt-4o-mini";
         public string ImageModel { get; set; } = "gpt-4-vision-preview";
