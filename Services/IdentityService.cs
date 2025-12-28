@@ -264,6 +264,40 @@ namespace MiddleWareWebApi.Services
             }
         }
 
+        public async Task<PrincipalDto?> GetUserByIdAsyncPrincipalDto(int userId)
+        {
+            try
+            {
+                using var connection = _context.CreateConnection();
+
+                var user = await connection.QueryFirstOrDefaultAsync<PrincipalDto>(
+                    "SELECT * FROM Users WHERE UserId = @UserId AND IsActive = 1",
+                    new { UserId = userId });
+
+                return user != null ? MapPrincipalDtoInfo(user) : null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting user by ID: {UserId}", userId);
+                return null;
+            }
+        }
+
+        private static PrincipalDto MapPrincipalDtoInfo(PrincipalDto user)
+        {
+            return new PrincipalDto
+            {
+                UserId = user.UserId,
+                Username = user.Username,
+                Email = user.Email,
+                FullName = user.FullName ?? string.Empty,
+                Role = user.Role ?? "User",
+                IsAuthenticated = true,
+                LoginTime = DateTime.UtcNow,
+                IpAddress = string.Empty
+            };
+        }
+
         public async Task<bool> ValidateTokenAsync(string token)
         {
             return await Task.FromResult(_jwtTokenService.ValidateToken(token));
@@ -325,7 +359,7 @@ namespace MiddleWareWebApi.Services
             };
         }
 
-        public async Task<UserInfo?> GetUserByTokenAsync(string token)
+        public async Task<PrincipalDto?> GetUserByTokenAsync(string token)
         {
             try
             {
@@ -338,7 +372,7 @@ namespace MiddleWareWebApi.Services
                 }
 
                 // Then get the full user information
-                var user = await GetUserByIdAsync(userId.Value);
+                var user = await GetUserByIdAsyncPrincipalDto(userId.Value);
                 if (user == null)
                 {
                     _logger.LogWarning("User not found for ID: {UserId}", userId);

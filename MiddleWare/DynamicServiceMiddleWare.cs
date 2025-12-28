@@ -24,7 +24,7 @@ namespace MiddleWareWebApi.MiddleWare
             var segments = context.Request.Path.Value?.Split('/');
             var reader = new StreamReader(context.Request.Body, leaveOpen: true);
             var jsonBody = await reader.ReadToEndAsync();
-            
+
             // 🔧 FIXED: Correct path parsing for /api/services/{ServiceName}/{MethodName}
             // Expected URL: /api/services/IdentityService/RegisterAsync
             // segments[0] = "" (empty)
@@ -32,8 +32,8 @@ namespace MiddleWareWebApi.MiddleWare
             // segments[2] = "services"
             // segments[3] = "IdentityService"   ← Service Name
             // segments[4] = "RegisterAsync"     ← Method Name
-            
-            if (segments != null && segments.Length >= 5 && 
+
+            if (segments != null && segments.Length >= 5 &&
                 segments[1].Equals("api", StringComparison.OrdinalIgnoreCase) &&
                 segments[2].Equals("services", StringComparison.OrdinalIgnoreCase))
             {
@@ -41,22 +41,22 @@ namespace MiddleWareWebApi.MiddleWare
                 var method = segments[4];
                 var serviceMethodKey = $"{serviceName}.{method}";
 
-                _logger.LogDebug("Processing dynamic service call: {ServiceMethodKey} from path: {Path}", 
+                _logger.LogDebug("Processing dynamic service call: {ServiceMethodKey} from path: {Path}",
                     serviceMethodKey, context.Request.Path);
 
                 // 🔓🔒 Check if this is a public service using centralized config
                 var isPublicService = PublicServicesConfig.IsPublicService(serviceName, method);
-                
+
                 // 🔒 Check authentication for protected services
                 if (!isPublicService)
                 {
                     var isAuthenticated = context.User?.Identity?.IsAuthenticated == true;
-                    
+
                     if (!isAuthenticated)
                     {
-                        _logger.LogWarning("Unauthenticated access attempt to protected service: {ServiceName}.{Method}", 
+                        _logger.LogWarning("Unauthenticated access attempt to protected service: {ServiceName}.{Method}",
                             serviceName, method);
-                        
+
                         context.Response.StatusCode = 401;
                         await context.Response.WriteAsJsonAsync(new
                         {
@@ -70,11 +70,11 @@ namespace MiddleWareWebApi.MiddleWare
                 }
 
                 // Log the service call with appropriate user info
-                var userId = isPublicService 
-                    ? "Anonymous" 
+                var userId = isPublicService
+                    ? "Anonymous"
                     : context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "Unknown";
 
-                _logger.LogInformation("Calling service: {ServiceName}.{Method} for user: {UserId} ({AccessLevel})", 
+                _logger.LogInformation("Calling service: {ServiceName}.{Method} for user: {UserId} ({AccessLevel})",
                     serviceName, method, userId, PublicServicesConfig.GetServiceAccessDescription(serviceName, method));
 
                 // 🔧 FIXED: Try to resolve service from DI container (handle both interface and concrete registrations)
@@ -134,221 +134,243 @@ namespace MiddleWareWebApi.MiddleWare
                     var args = new object?[parameters.Length];
 
                     // Process method parameters from request body
+                    //if (parameters.Length > 0)
+                    //{
+                    //    for (int i = 0; i < parameters.Length; i++)
+                    //    {
+                    //        var param = parameters[i];
+                    //        object? nameValue = null;
+
+                    //        // Skip parameters that are dependency injected (like ICurrentUserService)
+                    //        if (IsServiceParameter(param.ParameterType))
+                    //        {
+                    //            continue; // Let DI handle this parameter
+                    //        }
+
+                    //        if (param.ParameterType == typeof(PrincipalDto))
+                    //        {
+                    //            var principal = context.Items["Principal"];
+                    //            nameValue = principal;
+                    //            _logger.LogDebug("Auto-injected ClaimsPrincipal for parameter: {ParameterName} in {ServiceMethod}",
+                    //                param.Name, serviceMethodKey);
+                    //        }
+
+                    //        // 🌐 Special handling for IP address parameter in IdentityService methods
+                    //        else if (param.Name.Equals("ipAddress", StringComparison.OrdinalIgnoreCase) && 
+                    //            param.ParameterType == typeof(string))
+                    //        {
+                    //            nameValue = GetIpAddress(context);
+                    //            _logger.LogDebug("Auto-injected IP address: {IpAddress} for {ServiceMethod}", 
+                    //                nameValue, serviceMethodKey);
+                    //        }
+                    //        else if (!string.IsNullOrEmpty(jsonBody) && jsonBody != "{}")
+                    //        {
+                    //            var jsonObject = JObject.Parse(jsonBody);
+
+                    //            if (!jsonObject.TryGetValue(param.Name, StringComparison.OrdinalIgnoreCase, out var token))
+                    //            {
+                    //                if (!param.HasDefaultValue)
+                    //                {
+                    //                    _logger.LogWarning("Missing required parameter: {ParameterName} for {ServiceMethod}", 
+                    //                        param.Name, serviceMethodKey);
+                    //                    context.Response.StatusCode = 400;
+                    //                    await context.Response.WriteAsJsonAsync(new
+                    //                    {
+                    //                        error = $"Missing required parameter '{param.Name}' in request body",
+                    //                        service = serviceMethodKey,
+                    //                        accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method),
+                    //                        expectedParameters = parameters.Where(p => !IsServiceParameter(p.ParameterType))
+                    //                            .Select(p => new { name = p.Name, type = p.ParameterType.Name, required = !p.HasDefaultValue })
+                    //                    });
+                    //                    return;
+                    //                }
+                    //                nameValue = param.DefaultValue;
+                    //            }
+                    //            else
+                    //            {
+                    //                try
+                    //                {
+                    //                    if (param.ParameterType.IsClass && param.ParameterType != typeof(string))
+                    //                    {
+                    //                        // Deserialize complex object/DTO
+                    //                        nameValue = token.ToObject(param.ParameterType);
+
+                    //                        // Validate DTO fields
+                    //                        if (nameValue != null)
+                    //                        {
+                    //                            var validationContext = new ValidationContext(nameValue, null, null);
+                    //                            var results = new List<ValidationResult>();
+                    //                            bool isValid = Validator.TryValidateObject(nameValue, validationContext, results, true);
+
+                    //                            if (!isValid)
+                    //                            {
+                    //                                _logger.LogWarning("Validation failed for parameter: {ParameterName} in {ServiceMethod}", 
+                    //                                    param.Name, serviceMethodKey);
+                    //                                context.Response.StatusCode = 400;
+                    //                                await context.Response.WriteAsJsonAsync(new
+                    //                                {
+                    //                                    error = $"Validation failed for parameter '{param.Name}'",
+                    //                                    details = results.Select(r => r.ErrorMessage),
+                    //                                    service = serviceMethodKey,
+                    //                                    accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
+                    //                                });
+                    //                                return;
+                    //                            }
+                    //                        }
+                    //                    }
+                    //                    else
+                    //                    {
+                    //                        // Deserialize primitive type
+                    //                        nameValue = token.ToObject(param.ParameterType);
+                    //                    }
+                    //                }
+                    //                catch (Exception ex)
+                    //                {
+                    //                    _logger.LogError(ex, "Error deserializing parameter: {ParameterName} for {ServiceMethod}", 
+                    //                        param.Name, serviceMethodKey);
+                    //                    context.Response.StatusCode = 400;
+                    //                    await context.Response.WriteAsJsonAsync(new
+                    //                    {
+                    //                        error = $"Invalid value for parameter '{param.Name}'",
+                    //                        details = ex.Message,
+                    //                        service = serviceMethodKey
+                    //                    });
+                    //                    return;
+                    //                }
+                    //            }
+                    //        }
+                    //        else if (!param.HasDefaultValue)
+                    //        {
+                    //            _logger.LogWarning("No request body provided for required parameter: {ParameterName} in {ServiceMethod}", 
+                    //                param.Name, serviceMethodKey);
+                    //            context.Response.StatusCode = 400;
+                    //            await context.Response.WriteAsJsonAsync(new
+                    //            {
+                    //                error = $"Missing required parameter '{param.Name}'",
+                    //                message = "Request body is required for this service method",
+                    //                service = serviceMethodKey,
+                    //                accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
+                    //            });
+                    //            return;
+                    //        }
+
+                    //        args[i] = nameValue;
+                    //    }
+                    //}
+
                     if (parameters.Length > 0)
                     {
                         for (int i = 0; i < parameters.Length; i++)
                         {
                             var param = parameters[i];
                             object? nameValue = null;
-
-                            // Skip parameters that are dependency injected (like ICurrentUserService)
-                            if (IsServiceParameter(param.ParameterType))
-                            {
-                                continue; // Let DI handle this parameter
-                            }
-
+                            
                             if (param.ParameterType == typeof(PrincipalDto))
                             {
-                                var principal = context.Items["Principal"] as ClaimsPrincipal ?? context.User;
-                                nameValue = principal;
-                                _logger.LogDebug("Auto-injected ClaimsPrincipal for parameter: {ParameterName} in {ServiceMethod}",
-                                    param.Name, serviceMethodKey);
+                                nameValue = context.Items["Principal"] as PrincipalDto;
+                                args[i] = nameValue;
+                                _logger.LogDebug("Auto-injected PrincipalDto for parameter: {ParameterName}", param.Name);
                             }
-
-                            // 🌐 Special handling for IP address parameter in IdentityService methods
                             else if (param.Name.Equals("ipAddress", StringComparison.OrdinalIgnoreCase) && 
-                                param.ParameterType == typeof(string))
+                                     param.ParameterType == typeof(string))
                             {
                                 nameValue = GetIpAddress(context);
-                                _logger.LogDebug("Auto-injected IP address: {IpAddress} for {ServiceMethod}", 
-                                    nameValue, serviceMethodKey);
+                                args[i] = nameValue;
+                                _logger.LogDebug("Auto-injected IP address: {IpAddress}", nameValue);
                             }
-                            else if (!string.IsNullOrEmpty(jsonBody) && jsonBody != "{}")
+                            else if (IsServiceParameter(param.ParameterType))
                             {
-                                var jsonObject = JObject.Parse(jsonBody);
-                                
-                                if (!jsonObject.TryGetValue(param.Name, StringComparison.OrdinalIgnoreCase, out var token))
+                                nameValue = serviceProvider.GetService(param.ParameterType);
+                                args[i] = nameValue;
+                                _logger.LogDebug("Auto-injected service: {ServiceType}", param.ParameterType.Name);
+                            }
+                            else
+                            {
+                                // Only handle regular parameters from JSON
+                                if (!string.IsNullOrEmpty(jsonBody) && jsonBody != "{}")
                                 {
-                                    if (!param.HasDefaultValue)
+                                    var jsonObject = JObject.Parse(jsonBody);
+                                    if (!jsonObject.TryGetValue(param.Name, StringComparison.OrdinalIgnoreCase, out var token))
                                     {
-                                        _logger.LogWarning("Missing required parameter: {ParameterName} for {ServiceMethod}", 
-                                            param.Name, serviceMethodKey);
-                                        context.Response.StatusCode = 400;
-                                        await context.Response.WriteAsJsonAsync(new
+                                        if (!param.HasDefaultValue)
                                         {
-                                            error = $"Missing required parameter '{param.Name}' in request body",
-                                            service = serviceMethodKey,
-                                            accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method),
-                                            expectedParameters = parameters.Where(p => !IsServiceParameter(p.ParameterType))
-                                                .Select(p => new { name = p.Name, type = p.ParameterType.Name, required = !p.HasDefaultValue })
-                                        });
-                                        return;
-                                    }
-                                    nameValue = param.DefaultValue;
-                                }
-                                else
-                                {
-                                    try
-                                    {
-                                        if (param.ParameterType.IsClass && param.ParameterType != typeof(string))
-                                        {
-                                            // Deserialize complex object/DTO
-                                            nameValue = token.ToObject(param.ParameterType);
-
-                                            // Validate DTO fields
-                                            if (nameValue != null)
+                                            context.Response.StatusCode = 400;
+                                            await context.Response.WriteAsJsonAsync(new
                                             {
-                                                var validationContext = new ValidationContext(nameValue, null, null);
-                                                var results = new List<ValidationResult>();
-                                                bool isValid = Validator.TryValidateObject(nameValue, validationContext, results, true);
-
-                                                if (!isValid)
-                                                {
-                                                    _logger.LogWarning("Validation failed for parameter: {ParameterName} in {ServiceMethod}", 
-                                                        param.Name, serviceMethodKey);
-                                                    context.Response.StatusCode = 400;
-                                                    await context.Response.WriteAsJsonAsync(new
-                                                    {
-                                                        error = $"Validation failed for parameter '{param.Name}'",
-                                                        details = results.Select(r => r.ErrorMessage),
-                                                        service = serviceMethodKey,
-                                                        accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
-                                                    });
-                                                    return;
-                                                }
-                                            }
+                                                error = $"Missing required parameter '{param.Name}' in request body."
+                                            });
+                                            return;
                                         }
-                                        else
-                                        {
-                                            // Deserialize primitive type
-                                            nameValue = token.ToObject(param.ParameterType);
-                                        }
+                                        nameValue = param.DefaultValue;
                                     }
-                                    catch (Exception ex)
+                                    else
                                     {
-                                        _logger.LogError(ex, "Error deserializing parameter: {ParameterName} for {ServiceMethod}", 
-                                            param.Name, serviceMethodKey);
-                                        context.Response.StatusCode = 400;
-                                        await context.Response.WriteAsJsonAsync(new
-                                        {
-                                            error = $"Invalid value for parameter '{param.Name}'",
-                                            details = ex.Message,
-                                            service = serviceMethodKey
-                                        });
-                                        return;
+                                        nameValue = token.ToObject(param.ParameterType);
                                     }
                                 }
-                            }
-                            else if (!param.HasDefaultValue)
-                            {
-                                _logger.LogWarning("No request body provided for required parameter: {ParameterName} in {ServiceMethod}", 
-                                    param.Name, serviceMethodKey);
-                                context.Response.StatusCode = 400;
-                                await context.Response.WriteAsJsonAsync(new
+                                else if (!param.HasDefaultValue)
                                 {
-                                    error = $"Missing required parameter '{param.Name}'",
-                                    message = "Request body is required for this service method",
-                                    service = serviceMethodKey,
-                                    accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
-                                });
-                                return;
+                                    context.Response.StatusCode = 400;
+                                    await context.Response.WriteAsJsonAsync(new
+                                    {
+                                        error = $"Missing required parameter '{param.Name}'"
+                                    });
+                                    return;
+                                }
+                                
+                                args[i] = nameValue;
                             }
-
-                            args[i] = nameValue;
                         }
-                    }
 
-                    try
-                    {
-                        // 🔓🔒 Call service method (public or protected)
-                        _logger.LogDebug("Invoking {ServiceName}.{Method} with {ArgCount} arguments", 
-                            serviceName, method, args.Count(a => a != null));
+                        // Now invoke the method
+                        if (methodInfo != null)
+                        {
+                            // Invoke the method (assuming it has no parameters for simplicity)
+                            var paramValues = new object() { };
+                            // Example for a method with one string parameter
 
-                        var result = methodInfo.Invoke(service, args);
-                        
-                        context.Items["ResponseData"] = result;
+                            // var name = methodInfo.GetParameters().First().Name;
+                            var result = new object();
+                            var arg = new object();
+                            if (args.Length == 0)
+                            {
+                                result = methodInfo.Invoke(service, null);
+                                context.Items["ResponseData"] = result;
 
-                        _logger.LogInformation("Service call completed successfully: {ServiceName}.{Method} for user: {UserId} ({AccessLevel})", 
+                            }
+                            else if (args.Length > 0)
+                            {
+                                // arg = args.First();
+                                result = methodInfo.Invoke(service, args);
+                                context.Items["ResponseData"] = result;
+                            }
+                        }
+
+
+                        _logger.LogInformation("Service call completed successfully: {ServiceName}.{Method} for user: {UserId} ({AccessLevel})",
                             serviceName, method, userId, PublicServicesConfig.GetServiceAccessDescription(serviceName, method));
                     }
-                    catch (System.Reflection.TargetInvocationException tex) when (tex.InnerException != null)
+                    else
                     {
-                        var innerException = tex.InnerException;
-                        
-                        _logger.LogError(innerException, "Service method threw exception: {ServiceName}.{Method} ({AccessLevel})", 
-                            serviceName, method, PublicServicesConfig.GetServiceAccessDescription(serviceName, method));
-
-                        if (innerException is UnauthorizedAccessException)
-                        {
-                            context.Response.StatusCode = 403;
-                            await context.Response.WriteAsJsonAsync(new
-                            {
-                                error = "Access denied",
-                                message = innerException.Message,
-                                service = serviceMethodKey,
-                                accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
-                            });
-                            return;
-                        }
-
-                        if (innerException is ArgumentException argEx)
-                        {
-                            context.Response.StatusCode = 400;
-                            await context.Response.WriteAsJsonAsync(new
-                            {
-                                error = "Invalid arguments",
-                                message = argEx.Message,
-                                service = serviceMethodKey
-                            });
-                            return;
-                        }
-                        
-                        context.Response.StatusCode = 500;
+                        _logger.LogWarning("Service not found in DI container: {ServiceName}. Tried interface: I{ServiceName}, Concrete: {ServiceName}",
+                            serviceName, serviceName, serviceName);
+                        context.Response.StatusCode = 404;
                         await context.Response.WriteAsJsonAsync(new
                         {
-                            error = "An error occurred while processing your request",
-                            message = innerException.Message,
-                            service = serviceMethodKey,
-                            accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
-                        });
-                        return;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error invoking service method: {ServiceName}.{Method} ({AccessLevel})", 
-                            serviceName, method, PublicServicesConfig.GetServiceAccessDescription(serviceName, method));
-                        
-                        context.Response.StatusCode = 500;
-                        await context.Response.WriteAsJsonAsync(new
-                        {
-                            error = "An error occurred while processing your request",
-                            details = ex.Message,
-                            service = serviceMethodKey,
-                            accessLevel = PublicServicesConfig.GetServiceAccessDescription(serviceName, method)
-                        });
-                        return;
-                    }
-                }
-                else
-                {
-                    _logger.LogWarning("Service not found in DI container: {ServiceName}. Tried interface: I{ServiceName}, Concrete: {ServiceName}", 
-                        serviceName, serviceName, serviceName);
-                    context.Response.StatusCode = 404;
-                    await context.Response.WriteAsJsonAsync(new
-                    {
-                        error = $"Service '{serviceName}' not found in dependency injection container",
-                        details = "Make sure the service is registered in Program.cs",
-                        triedTypes = new[]
-                        {
+                            error = $"Service '{serviceName}' not found in dependency injection container",
+                            details = "Make sure the service is registered in Program.cs",
+                            triedTypes = new[]
+                            {
                             $"MiddleWareWebApi.Services.Interfaces.I{serviceName}",
                             $"MiddleWareWebApi.Services.{serviceName}"
                         }
-                    });
-                    return;
+                        });
+                        return;
+                    }
                 }
-            }
 
-            await _next(context);
+                await _next(context);
+            }
         }
 
         // Helper method to identify service parameters that should be dependency injected
