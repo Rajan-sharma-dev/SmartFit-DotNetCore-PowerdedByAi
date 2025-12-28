@@ -5,16 +5,7 @@
 
 # Documentation files - Exclude all Markdown files
 *.md
-
-# Secrets and sensitive configuration files
-*.secrets.json
-appsettings.Production.json
 appsettings.json
-**/secrets/**
-.env
-.env.local
-.env.production
-
 # User-specific files
 *.rsuser
 *.suo
