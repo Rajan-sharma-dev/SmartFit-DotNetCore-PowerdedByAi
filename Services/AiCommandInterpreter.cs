@@ -5,52 +5,36 @@ using MiddleWareWebApi.Models.Configuration;
 using MiddleWareWebApi.Services.Interfaces;
 using MiddleWareWebApi.Models.Identity;
 using MiddleWareWebApi.Models;
+using MiddleWareWebApi.Models.Prompts;
 using System.Net.Http.Headers;
-            using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 
 namespace MiddleWareWebApi.Services
 {
     /// <summary>
-    /// AI Command Interpreter that understands user intent and executes real application actions
+    /// AI Command Interpreter that understands user intent and executes real application actions.
+    /// Uses external prompt templates for maintainability and scalability.
     /// </summary>
     public class AiCommandInterpreter : IAiCommandInterpreter
     {
-        private readonly HttpClient _httpClient;
-        private readonly OpenAiSettings _settings;
+        private readonly IPromptOrchestrationService _promptOrchestration;
         private readonly ILogger<AiCommandInterpreter> _logger;
         private readonly TaskService _taskService;
         private readonly UserService _userService;
         private readonly IOpenAiProjectService _projectAiService;
-        private readonly SemaphoreSlim _rateLimitSemaphore;
-        private readonly ConcurrentQueue<DateTime> _requestTimestamps;
-        private static readonly object _lockObject = new object();
 
         public AiCommandInterpreter(
-            HttpClient httpClient,
-            IOptions<OpenAiSettings> settings,
+            IPromptOrchestrationService promptOrchestration,
             ILogger<AiCommandInterpreter> logger,
             TaskService taskService,
             UserService userService,
             IOpenAiProjectService projectAiService)
         {
-            _httpClient = httpClient;
-            _settings = settings.Value;
+            _promptOrchestration = promptOrchestration;
             _logger = logger;
             _taskService = taskService;
             _userService = userService;
             _projectAiService = projectAiService;
-            _rateLimitSemaphore = new SemaphoreSlim(_settings.RequestsPerMinute, _settings.RequestsPerMinute);
-            _requestTimestamps = new ConcurrentQueue<DateTime>();
-
-            ConfigureHttpClient();
-        }
-
-        private void ConfigureHttpClient()
-        {
-            _httpClient.BaseAddress = new Uri(_settings.BaseUrl);
-            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _settings.ApiKey);
-            _httpClient.DefaultRequestHeaders.Add("User-Agent", "AI-Command-Interpreter/1.0");
-            _httpClient.Timeout = TimeSpan.FromSeconds(_settings.TimeoutSeconds);
         }
 
         public async Task<CommandExecutionResult> ExecuteCommandAsync(string userPrompt, PrincipalDto? principal = null)
@@ -193,27 +177,14 @@ namespace MiddleWareWebApi.Services
 
         private async Task<CommandType> DetectCommandTypeAsync(string userPrompt)
         {
-            var systemMessage = @"You are a command type classifier. Analyze the user input and return ONLY the most appropriate command type.
-                                Available command types:
-                                - CreateTask: Creating/adding new tasks, stories, bugs
-                                - UpdateTask: Modifying existing tasks  
-                                - DeleteTask: Removing/deleting tasks
-                                - ListTasks: Showing/displaying tasks
-                                - AddComment: Adding comments to tasks
-                                - ChangeTaskStatus: Changing task completion status
-                                - GetUserInfo: Getting user profile information
-                                - AnalyzeProgress: Analyzing progress/productivity
-                                - Greeting: Greetings, hello, hi, casual conversation
-                                - Unknown: When intent is unclear";
-
-            var prompt = $@"Classify this user input into one of the command types:
-                         User Input: ""{userPrompt}""
-                         
-                         Return ONLY the exact command type name (e.g., 'CreateTask', 'Greeting', etc.)";
-
             try
             {
-                var response = await GetAiCompletionAsync(prompt, systemMessage);
+                var placeholders = new Dictionary<string, string>
+                {
+                    ["USER_INPUT"] = userPrompt
+                };
+
+                var response = await _promptOrchestration.ExecutePromptAsync("DetectCommandType", placeholders);
                 return ParseCommandType(response.Trim());
             }
             catch (Exception ex)
@@ -227,63 +198,21 @@ namespace MiddleWareWebApi.Services
 
         private async Task<CommandAnalysisResult> AnalyzeTaskCreationAsync(string userPrompt)
         {
-            var systemMessage = @"You are a task creation specialist for SmartFit project management. Extract comprehensive task details from user input.
-                                Focus on extracting: title, description, priority, task type, assignee, project, category, due date, estimation.
-                                
-                                Task Types: Bug, Story, Feature, Defect, Enhancement, Task
-                                Priorities: Low, Medium, High, Critical
-                                Categories: Authentication, UI/UX, Backend, Frontend, Database, Performance, Security, Testing, Documentation
-                                Projects: SmartFit-WebApp, SmartFit-Mobile, SmartFit-Backend, SmartFit-API, SmartFit-Analytics, SmartFit-Admin
-                                
-                                Common SmartFit contexts:
-                                - Workout tracking, fitness goals, exercise routines
-                                - User profiles, authentication, social features  
-                                - Nutrition tracking, meal planning, calorie counting
-                                - Progress analytics, reports, dashboards
-                                - Mobile app, wearable integration, notifications
-                                - Admin tools, trainer management, client tracking";
+            try
+            {
+                var placeholders = new Dictionary<string, string>
+                {
+                    ["USER_INPUT"] = userPrompt
+                };
 
-            var prompt = $@"Extract task creation details from this SmartFit fitness app request:
-                         User Input: ""{userPrompt}""
-                         
-                         Return JSON format:
-                         {{
-                          ""type"": ""CreateTask"",
-                          ""intent"": ""User wants to create a new task"",
-                          ""parameters"": {{
-                            ""title"": ""extracted task title (clear and concise)"",
-                            ""description"": ""extracted description if provided (optional)"",
-                            ""priority"": ""Low/Medium/High/Critical (default: Medium)"",
-                            ""taskType"": ""Bug/Story/Feature/Defect/Enhancement/Task (default: Task)"",
-                            ""assignee"": ""extracted assignee name if mentioned"",
-                            ""projectName"": ""SmartFit project if identifiable"",
-                            ""category"": ""relevant category if determinable"",
-                            ""estimatedHours"": ""estimated hours as number if mentioned"",
-                            ""dueDate"": ""due date if specified (YYYY-MM-DD format)"",
-                            ""tags"": ""comma-separated relevant tags""
-                          }},
-                          ""requiresAuthentication"": true,
-                          ""confidence"": ""High/Medium/Low"",
-                          ""actionDescription"": ""Create a new task with extracted details""
-                         }}
-                         
-                         Examples:
-                         - ""create critical bug fix login authentication issue assigned to john"" 
-                           → title: ""fix login authentication issue"", taskType: ""Bug"", priority: ""Critical"", assignee: ""john"", category: ""Authentication""
-                         
-                         - ""add high priority story for workout tracking dashboard""
-                           → title: ""workout tracking dashboard"", taskType: ""Story"", priority: ""High"", projectName: ""SmartFit-WebApp"", category: ""UI/UX""
-                         
-                         - ""create feature nutrition meal planning with 40 hours estimation due next friday""
-                           → title: ""nutrition meal planning"", taskType: ""Feature"", estimatedHours: ""40"", projectName: ""SmartFit-WebApp""
-                         
-                         - ""add enhancement optimize mobile app performance for android""
-                           → title: ""optimize mobile app performance for android"", taskType: ""Enhancement"", projectName: ""SmartFit-Mobile"", category: ""Performance""
-                         
-                         - ""create task update exercise database with new workout routines""
-                           → title: ""update exercise database with new workout routines"", taskType: ""Task"", category: ""Database"", tags: ""exercises,workouts,database""";
-
-            return await ExecuteSpecializedAnalysis(prompt, systemMessage, CommandType.CreateTask);
+                var response = await _promptOrchestration.ExecutePromptAsync("CreateTask", placeholders);
+                return ParseAnalysisResponse(response, CommandType.CreateTask);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error analyzing task creation for: {Prompt}", userPrompt);
+                return new CommandAnalysisResult { Type = CommandType.CreateTask, Confidence = "Low" };
+            }
         }
 
         private async Task<CommandAnalysisResult> AnalyzeGreetingAsync(string userPrompt)
@@ -301,125 +230,90 @@ namespace MiddleWareWebApi.Services
 
         private async Task<CommandAnalysisResult> AnalyzeTaskListingAsync(string userPrompt)
         {
-            var systemMessage = @"You are a task listing specialist. Extract filtering criteria from user input.
-                                Focus on: status filters, assignee filters, priority filters, date ranges.";
+            try
+            {
+                var placeholders = new Dictionary<string, string>
+                {
+                    ["USER_INPUT"] = userPrompt
+                };
 
-            var prompt = $@"Extract task listing criteria from this input:
-                         User Input: ""{userPrompt}""
-                         
-                         Return JSON format:
-                         {{
-                          ""type"": ""ListTasks"",
-                          ""intent"": ""User wants to view tasks"",
-                          ""parameters"": {{
-                            ""status"": ""completed/pending/all"",
-                            ""assignee"": ""specific user if mentioned"",
-                            ""priority"": ""High/Medium/Low if specified"",
-                            ""limit"": ""number of tasks to show""
-                          }},
-                          ""requiresAuthentication"": true,
-                          ""confidence"": ""High/Medium/Low"",
-                          ""actionDescription"": ""List tasks based on specified criteria""
-                         }}";
-
-            return await ExecuteSpecializedAnalysis(prompt, systemMessage, CommandType.ListTasks);
+                var response = await _promptOrchestration.ExecutePromptAsync("ListTasks", placeholders);
+                return ParseAnalysisResponse(response, CommandType.ListTasks);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error analyzing task listing for: {Prompt}", userPrompt);
+                return new CommandAnalysisResult { Type = CommandType.ListTasks, Confidence = "Low" };
+            }
         }
 
         private async Task<CommandAnalysisResult> AnalyzeTaskUpdateAsync(string userPrompt)
         {
-            var systemMessage = @"You are a task update specialist. Extract task ID and update fields.
-                                Focus on: task identification, field updates (title, description, priority, assignee).";
-
-            var prompt = $@"Extract task update details from this input:
-                         User Input: ""{userPrompt}""
-                         
-                         Return JSON format:
-                         {{
-                          ""type"": ""UpdateTask"",
-                          ""intent"": ""User wants to update an existing task"",
-                          ""parameters"": {{
-                            ""taskId"": ""extracted task ID or number"",
-                            ""title"": ""new title if provided"",
-                            ""description"": ""new description if provided"",
-                            ""priority"": ""new priority if specified"",
-                            ""assignee"": ""new assignee if mentioned""
-                          }},
-                          ""requiresAuthentication"": true,
-                          ""confidence"": ""High/Medium/Low"",
-                          ""actionDescription"": ""Update specified task with new details""
-                         }}";
-
-            return await ExecuteSpecializedAnalysis(prompt, systemMessage, CommandType.UpdateTask);
+            // For now, use a simple fallback since we don't have UpdateTask prompts yet
+            return new CommandAnalysisResult 
+            { 
+                Type = CommandType.UpdateTask, 
+                Intent = "User wants to update an existing task",
+                Parameters = ExtractUpdateParameters(userPrompt),
+                RequiresAuthentication = true,
+                Confidence = "Medium"
+            };
         }
 
         private async Task<CommandAnalysisResult> AnalyzeTaskDeletionAsync(string userPrompt)
         {
-            var systemMessage = @"You are a task deletion specialist. Extract task identification for deletion.
-                                Focus on: task ID, task title, or other identifying information.";
-
-            var prompt = $@"Extract task deletion details from this input:
-                         User Input: ""{userPrompt}""
-                         
-                         Return JSON format:
-                         {{
-                          ""type"": ""DeleteTask"",
-                          ""intent"": ""User wants to delete a task"",
-                          ""parameters"": {{
-                            ""taskId"": ""extracted task ID or number"",
-                            ""title"": ""task title if ID not provided""
-                          }},
-                          ""requiresAuthentication"": true,
-                          ""confidence"": ""High/Medium/Low"",
-                          ""actionDescription"": ""Delete the specified task""
-                         }}";
-
-            return await ExecuteSpecializedAnalysis(prompt, systemMessage, CommandType.DeleteTask);
+            // For now, use a simple fallback since we don't have DeleteTask prompts yet
+            return new CommandAnalysisResult 
+            { 
+                Type = CommandType.DeleteTask, 
+                Intent = "User wants to delete a task",
+                Parameters = ExtractDeleteParameters(userPrompt),
+                RequiresAuthentication = true,
+                Confidence = "Medium"
+            };
         }
 
         private async Task<CommandAnalysisResult> AnalyzeCommentAdditionAsync(string userPrompt)
         {
-            var systemMessage = @"You are a comment addition specialist. Extract task ID and comment text.";
-
-            var prompt = $@"Extract comment details from this input:
-                         User Input: ""{userPrompt}""
-                         
-                         Return JSON format:
-                         {{
-                          ""type"": ""AddComment"",
-                          ""intent"": ""User wants to add a comment to a task"",
-                          ""parameters"": {{
-                            ""taskId"": ""extracted task ID"",
-                            ""comment"": ""comment text to add""
-                          }},
-                          ""requiresAuthentication"": true,
-                          ""confidence"": ""High/Medium/Low"",
-                          ""actionDescription"": ""Add comment to specified task""
-                         }}";
-
-            return await ExecuteSpecializedAnalysis(prompt, systemMessage, CommandType.AddComment);
+            // For now, use a simple fallback since we don't have AddComment prompts yet
+            return new CommandAnalysisResult 
+            { 
+                Type = CommandType.AddComment, 
+                Intent = "User wants to add a comment to a task",
+                Parameters = ExtractCommentParameters(userPrompt),
+                RequiresAuthentication = true,
+                Confidence = "Medium"
+            };
         }
 
         private async Task<CommandAnalysisResult> AnalyzeStatusChangeAsync(string userPrompt)
         {
-            var systemMessage = @"You are a status change specialist. Extract task ID and new status.";
+            // For now, use a simple fallback since we don't have ChangeTaskStatus prompts yet
+            return new CommandAnalysisResult 
+            { 
+                Type = CommandType.ChangeTaskStatus, 
+                Intent = "User wants to change task status",
+                Parameters = ExtractStatusChangeParameters(userPrompt),
+                RequiresAuthentication = true,
+                Confidence = "Medium"
+            };
+        }
 
-            var prompt = $@"Extract status change details from this input:
-                         User Input: ""{userPrompt}""
-                         
-                         Return JSON format:
-                         {{
-                          ""type"": ""ChangeTaskStatus"",
-                          ""intent"": ""User wants to change task status"",
-                          ""parameters"": {{
-                            ""taskId"": ""extracted task ID"",
-                            ""status"": ""completed/pending/in-progress""
-                          }},
-                          ""requiresAuthentication"": true,
-                          ""confidence"": ""High/Medium/Low"",
-                          ""actionDescription"": ""Change status of specified task""
-                         }}";
-
-            return await ExecuteSpecializedAnalysis(prompt, systemMessage, CommandType.ChangeTaskStatus);
+        private async Task<CommandAnalysisResult> AnalyzeProgressRequestAsync(string userPrompt)
+        {
+            // For now, use a simple fallback since we don't have AnalyzeProgress prompts yet
+            return new CommandAnalysisResult 
+            { 
+                Type = CommandType.AnalyzeProgress, 
+                Intent = "User wants to analyze their progress",
+                Parameters = new Dictionary<string, object>
+                {
+                    ["timeRange"] = "month",
+                    ["scope"] = "overall"
+                },
+                RequiresAuthentication = true,
+                Confidence = "High"
+            };
         }
 
         private async Task<CommandAnalysisResult> AnalyzeUserInfoRequestAsync(string userPrompt)
@@ -433,64 +327,6 @@ namespace MiddleWareWebApi.Services
                 Confidence = "High",
                 ActionDescription = "Retrieve and display user profile information"
             };
-        }
-
-        private async Task<CommandAnalysisResult> AnalyzeProgressRequestAsync(string userPrompt)
-        {
-            var systemMessage = @"You are a progress analysis specialist. Extract time period and scope.";
-
-            var prompt = $@"Extract progress analysis criteria from this input:
-                         User Input: ""{userPrompt}""
-                         
-                         Return JSON format:
-                         {{
-                          ""type"": ""AnalyzeProgress"",
-                          ""intent"": ""User wants to analyze their progress"",
-                          ""parameters"": {{
-                            ""timeRange"": ""week/month/quarter/year"",
-                            ""scope"": ""tasks/projects/overall""
-                          }},
-                          ""requiresAuthentication"": true,
-                          ""confidence"": ""High/Medium/Low"",
-                          ""actionDescription"": ""Analyze user progress for specified period""
-                         }}";
-
-            return await ExecuteSpecializedAnalysis(prompt, systemMessage, CommandType.AnalyzeProgress);
-        }
-
-        private async Task<CommandAnalysisResult> ExecuteSpecializedAnalysis(string prompt, string systemMessage, CommandType expectedType)
-        {
-            try
-            {
-                var response = await GetAiCompletionAsync(prompt, systemMessage);
-                
-                // Extract JSON from response
-                var jsonStart = response.IndexOf('{');
-                var jsonEnd = response.LastIndexOf('}');
-                
-                if (jsonStart >= 0 && jsonEnd > jsonStart)
-                {
-                    var jsonResponse = response.Substring(jsonStart, jsonEnd - jsonStart + 1);
-                    var analysisData = JsonSerializer.Deserialize<JsonElement>(jsonResponse);
-                    
-                    return new CommandAnalysisResult
-                    {
-                        Type = expectedType,
-                        Intent = analysisData.GetProperty("intent").GetString() ?? "",
-                        Parameters = ParseParameters(analysisData.GetProperty("parameters")),
-                        RequiresAuthentication = analysisData.GetProperty("requiresAuthentication").GetBoolean(),
-                        Confidence = analysisData.GetProperty("confidence").GetString() ?? "Medium",
-                        ActionDescription = analysisData.GetProperty("actionDescription").GetString() ?? ""
-                    };
-                }
-
-                return new CommandAnalysisResult { Type = expectedType, Confidence = "Low" };
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Error in specialized analysis for {Type}", expectedType);
-                return new CommandAnalysisResult { Type = expectedType, Confidence = "Low" };
-            }
         }
 
         #endregion
@@ -1161,128 +997,150 @@ namespace MiddleWareWebApi.Services
 
         #region Helper Methods
 
-        private async Task<string> GetAiCompletionAsync(string prompt, string systemMessage)
+        /// <summary>
+        /// Parses AI response JSON into CommandAnalysisResult
+        /// </summary>
+        private CommandAnalysisResult ParseAnalysisResponse(string response, CommandType expectedType)
         {
-            const int maxRetries = 1;
-            const int baseDelayMs = 1000;
-            
-            for (int attempt = 0; attempt < maxRetries; attempt++)
+            try
             {
-                try
+                // Extract JSON from response
+                var jsonStart = response.IndexOf('{');
+                var jsonEnd = response.LastIndexOf('}');
+                
+                if (jsonStart >= 0 && jsonEnd > jsonStart)
                 {
-                    // Apply rate limiting
-                    await ApplyRateLimitAsync();
-
-                    var requestBody = new
+                    var jsonResponse = response.Substring(jsonStart, jsonEnd - jsonStart + 1);
+                    var analysisData = JsonSerializer.Deserialize<JsonElement>(jsonResponse);
+                    
+                    return new CommandAnalysisResult
                     {
-                        model = _settings.DefaultModel,
-                        messages = new[]
-                        {
-                            new { role = "system", content = systemMessage },
-                            new { role = "user", content = prompt }
-                        },
-                        max_tokens = 800,
-                        temperature = 0.3
+                        Type = expectedType,
+                        Intent = analysisData.GetProperty("intent").GetString() ?? "",
+                        Parameters = ParseParameters(analysisData.GetProperty("parameters")),
+                        RequiresAuthentication = analysisData.GetProperty("requiresAuthentication").GetBoolean(),
+                        Confidence = analysisData.GetProperty("confidence").GetString() ?? "Medium",
+                        ActionDescription = analysisData.GetProperty("actionDescription").GetString() ?? ""
                     };
-
-                    var json = JsonSerializer.Serialize(requestBody);
-                    var content = new StringContent(json, Encoding.UTF8, "application/json");
-                    
-                    var response = await _httpClient.PostAsync("/v1/chat/completions", content);
-                    
-                    // Handle specific HTTP status codes
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        var errorContent = await response.Content.ReadAsStringAsync();
-                        
-                        switch (response.StatusCode)
-                        {
-                            case System.Net.HttpStatusCode.TooManyRequests:
-                                _logger.LogWarning("Rate limit exceeded on attempt {Attempt}. Status: {StatusCode}, Content: {Content}", 
-                                    attempt + 1, response.StatusCode, errorContent);
-                                
-                                if (attempt < maxRetries - 1)
-                                {
-                                    var delay = TimeSpan.FromMilliseconds(baseDelayMs * Math.Pow(2, attempt));
-                                    _logger.LogInformation("Retrying in {Delay}ms...", delay.TotalMilliseconds);
-                                    await Task.Delay(delay);
-                                    continue;
-                                }
-                                throw new InvalidOperationException("AI service rate limit exceeded after all retry attempts. Please try again later.");
-                            
-                            case System.Net.HttpStatusCode.Unauthorized:
-                                _logger.LogError("Authentication failed. Status: {StatusCode}", response.StatusCode);
-                                throw new UnauthorizedAccessException("AI service authentication failed.");
-                            
-                            case System.Net.HttpStatusCode.BadRequest:
-                                _logger.LogError("Bad request to AI service. Status: {StatusCode}, Content: {Content}", 
-                                    response.StatusCode, errorContent);
-                                throw new ArgumentException("Invalid request to AI service.");
-                            
-                            default:
-                                _logger.LogError("AI service request failed. Status: {StatusCode}, Content: {Content}", 
-                                    response.StatusCode, errorContent);
-                                response.EnsureSuccessStatusCode();
-                                break;
-                        }
-                    }
-
-                    var responseContent = await response.Content.ReadAsStringAsync();
-                    var result = JsonSerializer.Deserialize<JsonElement>(responseContent);
-
-                    return result.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString() ?? "";
                 }
-                catch (HttpRequestException ex)
+
+                return new CommandAnalysisResult { Type = expectedType, Confidence = "Low" };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error parsing analysis response for {Type}", expectedType);
+                return new CommandAnalysisResult { Type = expectedType, Confidence = "Low" };
+            }
+        }
+
+        /// <summary>
+        /// Simple fallback parameter extraction for commands without prompt templates yet
+        /// </summary>
+        private Dictionary<string, object> ExtractUpdateParameters(string userPrompt)
+        {
+            var parameters = new Dictionary<string, object>();
+            
+            // Simple regex-based extraction as fallback
+            var taskIdMatch = System.Text.RegularExpressions.Regex.Match(userPrompt, @"task\s+(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (taskIdMatch.Success && int.TryParse(taskIdMatch.Groups[1].Value, out int taskId))
+            {
+                parameters["taskId"] = taskId;
+            }
+
+            if (userPrompt.Contains("title", StringComparison.OrdinalIgnoreCase))
+            {
+                var titleMatch = System.Text.RegularExpressions.Regex.Match(userPrompt, @"title\s+(?:to\s+)?['""]([^'""]+)['""]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (titleMatch.Success)
                 {
-                    _logger.LogError(ex, "Network error when calling AI service on attempt {Attempt}", attempt + 1);
-                    if (attempt < maxRetries - 1)
-                    {
-                        var delay = TimeSpan.FromMilliseconds(baseDelayMs * Math.Pow(2, attempt));
-                        await Task.Delay(delay);
-                        continue;
-                    }
-                    throw new InvalidOperationException("Network error occurred while contacting AI service after all retry attempts.", ex);
-                }
-                catch (TaskCanceledException ex)
-                {
-                    _logger.LogError(ex, "AI service request timed out on attempt {Attempt}", attempt + 1);
-                    if (attempt < maxRetries - 1)
-                    {
-                        var delay = TimeSpan.FromMilliseconds(baseDelayMs * Math.Pow(2, attempt));
-                        await Task.Delay(delay);
-                        continue;
-                    }
-                    throw new TimeoutException("AI service request timed out after all retry attempts.", ex);
-                }
-                catch (Exception ex) when (!(ex is InvalidOperationException || ex is UnauthorizedAccessException || ex is ArgumentException))
-                {
-                    _logger.LogError(ex, "Error getting AI completion on attempt {Attempt}", attempt + 1);
-                    if (attempt < maxRetries - 1)
-                    {
-                        var delay = TimeSpan.FromMilliseconds(baseDelayMs * Math.Pow(2, attempt));
-                        await Task.Delay(delay);
-                        continue;
-                    }
-                    throw;
+                    parameters["title"] = titleMatch.Groups[1].Value;
                 }
             }
+
+            if (userPrompt.Contains("priority", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var priority in new[] { "high", "low", "medium", "critical" })
+                {
+                    if (userPrompt.Contains(priority, StringComparison.OrdinalIgnoreCase))
+                    {
+                        parameters["priority"] = char.ToUpper(priority[0]) + priority.Substring(1);
+                        break;
+                    }
+                }
+            }
+
+            return parameters;
+        }
+
+        private Dictionary<string, object> ExtractDeleteParameters(string userPrompt)
+        {
+            var parameters = new Dictionary<string, object>();
             
-            throw new InvalidOperationException("All retry attempts failed");
+            var taskIdMatch = System.Text.RegularExpressions.Regex.Match(userPrompt, @"task\s+(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (taskIdMatch.Success && int.TryParse(taskIdMatch.Groups[1].Value, out int taskId))
+            {
+                parameters["taskId"] = taskId;
+            }
+
+            return parameters;
+        }
+
+        private Dictionary<string, object> ExtractCommentParameters(string userPrompt)
+        {
+            var parameters = new Dictionary<string, object>();
+            
+            var taskIdMatch = System.Text.RegularExpressions.Regex.Match(userPrompt, @"task\s+(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (taskIdMatch.Success && int.TryParse(taskIdMatch.Groups[1].Value, out int taskId))
+            {
+                parameters["taskId"] = taskId;
+            }
+
+            var commentMatch = System.Text.RegularExpressions.Regex.Match(userPrompt, @"['""]([^'""]+)['""]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (commentMatch.Success)
+            {
+                parameters["comment"] = commentMatch.Groups[1].Value;
+            }
+
+            return parameters;
+        }
+
+        private Dictionary<string, object> ExtractStatusChangeParameters(string userPrompt)
+        {
+            var parameters = new Dictionary<string, object>();
+            
+            var taskIdMatch = System.Text.RegularExpressions.Regex.Match(userPrompt, @"task\s+(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (taskIdMatch.Success && int.TryParse(taskIdMatch.Groups[1].Value, out int taskId))
+            {
+                parameters["taskId"] = taskId;
+            }
+
+            foreach (var status in new[] { "completed", "complete", "done", "pending", "in-progress" })
+            {
+                if (userPrompt.Contains(status, StringComparison.OrdinalIgnoreCase))
+                {
+                    parameters["status"] = status.Contains("complet") || status.Contains("done") ? "completed" : status;
+                    break;
+                }
+            }
+
+            return parameters;
         }
 
         private async Task<string> GenerateClarificationAsync(string userPrompt)
         {
-            var prompt = $@"The user said: ""{userPrompt}""
+            try
+            {
+                var placeholders = new Dictionary<string, string>
+                {
+                    ["USER_INPUT"] = userPrompt
+                };
 
-                I couldn't understand their intent. Generate a helpful clarification response that:
-                1. Acknowledges I didn't understand
-                2. Lists 3-4 common things they might have meant
-                3. Asks them to be more specific
-
-                Available actions: create task, update task, list tasks, delete task, 
-                add comment, change status, get my info, analyze progress.";
-
-            return await GetAiCompletionAsync(prompt, "You are a helpful project management AI assistant.");
+                return await _promptOrchestration.ExecutePromptAsync("Clarification", placeholders);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to generate AI clarification, using fallback");
+                return "I couldn't understand your request. Please try one of these commands: 'list my tasks', 'create a new task', 'show my user info', or 'analyze my progress'.";
+            }
         }
 
         private CommandType ParseCommandType(string commandTypeStr)
@@ -1374,40 +1232,6 @@ namespace MiddleWareWebApi.Services
             }
 
             return suggestions;
-        }
-
-        private async Task ApplyRateLimitAsync()
-        {
-            // Wait for semaphore availability
-            await _rateLimitSemaphore.WaitAsync();
-            
-            try
-            {
-                var now = DateTime.UtcNow;
-                _requestTimestamps.Enqueue(now);
-                
-                // Clean up old timestamps (older than 1 minute)
-                lock (_lockObject)
-                {
-                    while (_requestTimestamps.TryPeek(out var oldestTimestamp) && 
-                           now.Subtract(oldestTimestamp).TotalMinutes >= 1)
-                    {
-                        _requestTimestamps.TryDequeue(out _);
-                    }
-                }
-                
-                // If we have too many requests in the last minute, wait
-                if (_requestTimestamps.Count >= _settings.RequestsPerMinute)
-                {
-                    var delay = TimeSpan.FromSeconds(60.0 / _settings.RequestsPerMinute);
-                    _logger.LogInformation("Rate limiting: waiting {Delay}ms to avoid 429 error", delay.TotalMilliseconds);
-                    await Task.Delay(delay);
-                }
-            }
-            finally
-            {
-                _rateLimitSemaphore.Release();
-            }
         }
 
         #endregion

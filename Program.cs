@@ -5,6 +5,7 @@ using MiddleWareWebApi.MiddleWare;
 using MiddleWareWebApi.Services;
 using MiddleWareWebApi.Services.Interfaces;
 using MiddleWareWebApi.Models.Configuration;
+using MiddleWareWebApi.Extensions;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
@@ -32,10 +33,12 @@ builder.Services.AddSingleton<DapperContext>();
 // Configure OpenAI Settings
 builder.Services.Configure<OpenAiSettings>(builder.Configuration.GetSection("OpenAi"));
 
+// Add Prompt Management Services
+builder.Services.AddPromptManagement(builder.Configuration);
+
 // Add HttpClient for OpenAI Services
 builder.Services.AddHttpClient<IOpenAiService, OpenAiService>();
 builder.Services.AddHttpClient<IOpenAiProjectService, OpenAiProjectService>();
-builder.Services.AddHttpClient<IAiCommandInterpreter, AiCommandInterpreter>();
 
 // Services - Principal is automatically available through ICurrentUserService
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
@@ -45,7 +48,9 @@ builder.Services.AddScoped<IIdentityService, IdentityService>();
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 builder.Services.AddScoped<IOpenAiService, OpenAiService>();
 builder.Services.AddScoped<IOpenAiProjectService, OpenAiProjectService>();
-builder.Services.AddScoped<IAiCommandInterpreter, AiCommandInterpreter>();
+
+// Add AI Command Services (with new prompt management architecture)
+builder.Services.AddAiCommandServices();
 
 // ?? Configure Cookie Policy for automatic token management
 builder.Services.Configure<CookiePolicyOptions>(options =>
@@ -146,6 +151,9 @@ if (app.Environment.IsDevelopment())
 
 // Enable CORS
 app.UseCors("AllowMultipleFrameworks");
+
+// Configure Prompt Management
+app.UsePromptManagement(app.Configuration);
 
 // 📁 Enable static files (for database-management.html and other static content)
 app.UseStaticFiles();
