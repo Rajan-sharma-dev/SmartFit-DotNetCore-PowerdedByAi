@@ -170,7 +170,7 @@ namespace MiddleWareWebApi.Services
             }
         }
 
-        // Response Models for JSON deserialization
+        
         private class OpenAiChatResponse
         {
             public List<Choice>? Choices { get; set; }
