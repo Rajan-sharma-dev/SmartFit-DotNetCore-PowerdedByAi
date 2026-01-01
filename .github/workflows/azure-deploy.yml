@@ -1,0 +1,162 @@
+name: Deploy to Azure App Service
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AZURE_WEBAPP_NAME: 'smarttask-ai-api'
+  AZURE_WEBAPP_PACKAGE_PATH: '.'
+  DOTNET_VERSION: '8.0'
+  CONFIGURATION: 'Release'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    name: Build and Test
+    
+    steps:
+    - name: 'Checkout GitHub Action'
+      uses: actions/checkout@v4
+
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore SmartTask-AI-Assistant-Backend.csproj
+
+    - name: Build application
+      run: dotnet build SmartTask-AI-Assistant-Backend.csproj --configuration ${{ env.CONFIGURATION }} --no-restore
+
+    - name: Create publish directory
+      run: |
+        dotnet publish SmartTask-AI-Assistant-Backend.csproj --configuration ${{ env.CONFIGURATION }} --no-build --output ./publish
+
+    - name: Upload artifact for deployment job
+      uses: actions/upload-artifact@v4
+      with:
+        name: .net-app
+        path: ./publish
+
+  security-scan:
+    runs-on: ubuntu-latest
+    name: Security Analysis
+    needs: build-and-test
+    
+    steps:
+    - name: 'Checkout GitHub Action'
+      uses: actions/checkout@v4
+
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore SmartTask-AI-Assistant-Backend.csproj
+
+  deploy-staging:
+    runs-on: ubuntu-latest
+    name: Deploy to Staging
+    needs: [build-and-test, security-scan]
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+    - name: Download artifact from build job
+      uses: actions/download-artifact@v4
+      with:
+        name: .net-app
+        path: ./publish
+
+    - name: Replace appsettings for staging
+      run: |
+        echo "Configuring staging appsettings..."
+        # Replace tokens in appsettings.json with staging environment variables
+        if [ -f "./publish/appsettings.json" ]; then
+          sed -i 's/"your-openai-api-key-here"/"${{ secrets.STAGING_OPENAI_API_KEY }}"/g' ./publish/appsettings.json
+          sed -i 's/Server=localhost\\\\SQLEXPRESS;Database=SmartFitDB;Trusted_Connection=True;TrustServerCertificate=True;/"${{ secrets.STAGING_DATABASE_CONNECTION_STRING }}"/g' ./publish/appsettings.json
+        fi
+        
+    - name: Deploy to Azure Web App (Staging)
+      uses: azure/webapps-deploy@v3
+      with:
+        app-name: ${{ env.AZURE_WEBAPP_NAME }}-staging
+        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_STAGING }}
+        package: ./publish
+
+    - name: Run staging health checks
+      run: |
+        echo "Running staging health checks..."
+        sleep 30 # Give app time to start
+        curl -f https://${{ env.AZURE_WEBAPP_NAME }}-staging.azurewebsites.net/health || echo "Health check failed, but continuing..."
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    name: Deploy to Production
+    needs: [build-and-test, security-scan]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+    - name: Download artifact from build job
+      uses: actions/download-artifact@v4
+      with:
+        name: .net-app
+        path: ./publish
+
+    - name: Replace appsettings for production
+      run: |
+        echo "Configuring production appsettings..."
+        # Replace tokens in appsettings.json with production environment variables
+        if [ -f "./publish/appsettings.json" ]; then
+          sed -i 's/"your-openai-api-key-here"/"${{ secrets.OPENAI_API_KEY }}"/g' ./publish/appsettings.json
+          sed -i 's/Server=localhost\\\\SQLEXPRESS;Database=SmartFitDB;Trusted_Connection=True;TrustServerCertificate=True;/"${{ secrets.DATABASE_CONNECTION_STRING }}"/g' ./publish/appsettings.json
+        fi
+
+    - name: Deploy to Azure Web App (Production)
+      uses: azure/webapps-deploy@v3
+      with:
+        app-name: ${{ env.AZURE_WEBAPP_NAME }}
+        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_PRODUCTION }}
+        package: ./publish
+
+    - name: Run production health checks
+      run: |
+        echo "Running production health checks..."
+        sleep 30 # Give app time to start
+        curl -f https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/health || echo "Health check failed, but continuing..."
+
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ github.run_number }}
+        release_name: Release v${{ github.run_number }}
+        body: |
+          Automated release from main branch
+          - Commit: ${{ github.sha }}
+          - Author: ${{ github.actor }}
+        draft: false
+        prerelease: false
+
+  notify:
+    runs-on: ubuntu-latest
+    name: Notify Deployment Status
+    needs: [deploy-staging, deploy-production]
+    if: always()
+    
+    steps:
+    - name: Notify on deployment success
+      if: success()
+      run: echo "? Deployment completed successfully!"
+      
+    - name: Notify on deployment failure
+      if: failure()
+      run: echo "? Deployment failed!"

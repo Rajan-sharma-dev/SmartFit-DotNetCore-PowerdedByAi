@@ -1,0 +1,56 @@
+{
+  "name": "SmartTask AI Assistant API",
+  "short_name": "smarttask-ai",
+  "version": "1.0.0",
+  "description": "Intelligent task management system with AI-powered natural language processing",
+  "environments": {
+    "production": {
+      "azure_app_service": {
+        "name": "smarttask-ai-api-production",
+        "resource_group": "smarttask-ai-rg-production",
+        "app_service_plan": "smarttask-ai-plan-production",
+        "sku": "B1"
+      },
+      "database": {
+        "type": "Azure SQL Database",
+        "server": "smarttask-ai-sql-production",
+        "database": "SmartTaskDB"
+      }
+    },
+    "staging": {
+      "azure_app_service": {
+        "name": "smarttask-ai-api-staging",
+        "resource_group": "smarttask-ai-rg-staging", 
+        "app_service_plan": "smarttask-ai-plan-staging",
+        "sku": "B1"
+      },
+      "database": {
+        "type": "Azure SQL Database",
+        "server": "smarttask-ai-sql-staging",
+        "database": "SmartTaskDB"
+      }
+    }
+  },
+  "deployment": {
+    "framework": ".NET 8.0",
+    "runtime": "linux-x64",
+    "publish_profile_required": true,
+    "health_check_path": "/health",
+    "startup_command": "",
+    "pre_build_commands": [],
+    "post_deployment_actions": [
+      "Database migration check",
+      "Health endpoint verification",
+      "Configuration validation"
+    ]
+  },
+  "monitoring": {
+    "application_insights": true,
+    "log_streaming": true,
+    "alerts": [
+      "Application failures",
+      "High response time", 
+      "Database connectivity issues"
+    ]
+  }
+}
