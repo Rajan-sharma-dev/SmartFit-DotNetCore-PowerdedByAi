@@ -191,7 +191,7 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Log successful startup configuration
+
 Console.WriteLine($"🚀 Starting SmartTask AI Assistant API - Environment: {app.Environment.EnvironmentName}");
 Console.WriteLine($"   Time: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
 
