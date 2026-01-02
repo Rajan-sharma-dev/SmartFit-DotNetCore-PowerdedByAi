@@ -7,14 +7,7 @@
     <UseAppHost>false</UseAppHost>
     <AssemblyName>SmartTask.AI.Api</AssemblyName>
     <RootNamespace>SmartTask.AI.Api</RootNamespace>
-    <Product>SmartTask AI Assistant</Product>
-    <Description>An intelligent task management system powered by AI with natural language processing and conversation context</Description>
-    <Company>SmartTask AI</Company>
-    <Authors>SmartTask AI Team</Authors>
-    <Version>1.0.0</Version>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
   </PropertyGroup>
 
   <ItemGroup>
