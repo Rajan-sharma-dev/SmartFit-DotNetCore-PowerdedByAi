@@ -27,11 +27,50 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
 var jwtSettings = builder.Configuration.GetSection("JwtSettings").Get<JwtSettings>();
 
+// Validate JWT Settings - Add logging to help diagnose startup issues
+if (jwtSettings == null || string.IsNullOrEmpty(jwtSettings.SecretKey))
+{
+    Console.WriteLine("❌ ERROR: JWT Settings not found or SecretKey is empty");
+    Console.WriteLine($"Environment: {builder.Environment.EnvironmentName}");
+    Console.WriteLine("Available configuration keys:");
+    foreach (var config in builder.Configuration.AsEnumerable())
+    {
+        Console.WriteLine($"  {config.Key}: {(config.Key.ToLower().Contains("secret") || config.Key.ToLower().Contains("key") ? "[HIDDEN]" : config.Value)}");
+    }
+}
+else
+{
+    Console.WriteLine($"✅ JWT Settings loaded successfully for environment: {builder.Environment.EnvironmentName}");
+}
+
 // Database Context
 builder.Services.AddSingleton<DapperContext>();
 
+// Validate Database Connection String
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+if (string.IsNullOrEmpty(connectionString))
+{
+    Console.WriteLine("❌ ERROR: Database connection string 'DefaultConnection' not found");
+}
+else
+{
+    Console.WriteLine("✅ Database connection string loaded successfully");
+    Console.WriteLine($"   Server: {(connectionString.Contains("localhost") ? "localhost (development)" : "Azure SQL (production)")}");
+}
+
 // Configure OpenAI Settings
 builder.Services.Configure<OpenAiSettings>(builder.Configuration.GetSection("OpenAi"));
+var openAiSettings = builder.Configuration.GetSection("OpenAi").Get<OpenAiSettings>();
+
+// Validate OpenAI Settings
+if (openAiSettings == null || string.IsNullOrEmpty(openAiSettings.ApiKey))
+{
+    Console.WriteLine("❌ ERROR: OpenAI Settings not found or ApiKey is empty");
+}
+else
+{
+    Console.WriteLine("✅ OpenAI Settings loaded successfully");
+}
 
 // Add Prompt Management Services
 builder.Services.AddPromptManagement(builder.Configuration);
@@ -61,59 +100,69 @@ builder.Services.Configure<CookiePolicyOptions>(options =>
 });
 
 // JWT Authentication (supports both cookies and headers)
-builder.Services.AddAuthentication(options =>
+try
 {
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-.AddJwtBearer(options =>
-{
-    options.RequireHttpsMetadata = false; // Set to true in production
-    options.SaveToken = true;
-    
-    // ?? Configure to read JWT from both cookies and headers
-    options.Events = new JwtBearerEvents
+    builder.Services.AddAuthentication(options =>
     {
-        OnMessageReceived = context =>
+        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
+    })
+    .AddJwtBearer(options =>
+    {
+        options.RequireHttpsMetadata = true; // Always require HTTPS in production
+        options.SaveToken = true;
+        
+        // ?? Configure to read JWT from both cookies and headers
+        options.Events = new JwtBearerEvents
         {
-            // Try to get token from cookie first (automatic)
-            var token = context.Request.Cookies["accessToken"];
-            if (!string.IsNullOrEmpty(token))
+            OnMessageReceived = context =>
             {
-                context.Token = token;
+                // Try to get token from cookie first (automatic)
+                var token = context.Request.Cookies["accessToken"];
+                if (!string.IsNullOrEmpty(token))
+                {
+                    context.Token = token;
+                }
+                return Task.CompletedTask;
+            },
+            OnAuthenticationFailed = context =>
+            {
+                context.Response.StatusCode = 401;
+                context.Response.ContentType = "application/json";
+                var result = System.Text.Json.JsonSerializer.Serialize(new { message = "Authentication failed" });
+                return context.Response.WriteAsync(result);
+            },
+            OnChallenge = context =>
+            {
+                context.HandleResponse();
+                context.Response.StatusCode = 401;
+                context.Response.ContentType = "application/json";
+                var result = System.Text.Json.JsonSerializer.Serialize(new { message = "You are not authorized" });
+                return context.Response.WriteAsync(result);
             }
-            return Task.CompletedTask;
-        },
-        OnAuthenticationFailed = context =>
-        {
-            context.Response.StatusCode = 401;
-            context.Response.ContentType = "application/json";
-            var result = System.Text.Json.JsonSerializer.Serialize(new { message = "Authentication failed" });
-            return context.Response.WriteAsync(result);
-        },
-        OnChallenge = context =>
-        {
-            context.HandleResponse();
-            context.Response.StatusCode = 401;
-            context.Response.ContentType = "application/json";
-            var result = System.Text.Json.JsonSerializer.Serialize(new { message = "You are not authorized" });
-            return context.Response.WriteAsync(result);
-        }
-    };
+        };
 
-    options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        ValidIssuer = jwtSettings?.Issuer,
-        ValidAudience = jwtSettings?.Audience,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings?.SecretKey ?? "")),
-        ClockSkew = TimeSpan.Zero
-    };
-});
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = jwtSettings?.Issuer,
+            ValidAudience = jwtSettings?.Audience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings?.SecretKey ?? "")),
+            ClockSkew = TimeSpan.Zero
+        };
+    });
+    
+    Console.WriteLine("✅ JWT Authentication configured successfully");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"❌ ERROR configuring JWT Authentication: {ex.Message}");
+    throw; // Re-throw to prevent app from starting with broken auth
+}
 
 // Authorization
 builder.Services.AddAuthorization(options =>
@@ -141,6 +190,10 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+// Log successful startup configuration
+Console.WriteLine($"🚀 Starting SmartTask AI Assistant API - Environment: {app.Environment.EnvironmentName}");
+Console.WriteLine($"   Time: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
 
 // Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())
@@ -182,4 +235,13 @@ app.UseMiddleware<ResponseMiddleware>();
 
 app.MapControllers();
 
-app.Run();
+try
+{
+    app.Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"❌ FATAL ERROR: Application failed to start: {ex.Message}");
+    Console.WriteLine($"Stack trace: {ex.StackTrace}");
+    throw;
+}
