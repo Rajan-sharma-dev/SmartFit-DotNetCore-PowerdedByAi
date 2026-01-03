@@ -192,13 +192,38 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-app.MapGet("/health", () => Results.Ok(new
+app.Map("/health", healthApp =>
 {
-    status = "healthy",
-    timestamp = DateTime.UtcNow,
-    environment = app.Environment.EnvironmentName
-}));
+    healthApp.Run(async context =>
+    {
+        context.Response.ContentType = "application/json";
 
+        await context.Response.WriteAsync(
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                status = "healthy",
+                timestamp = DateTime.UtcNow,
+                environment = app.Environment.EnvironmentName
+            })
+        );
+    });
+});
+
+app.Map("/hello", helloApp =>
+{
+    helloApp.Run(async context =>
+    {
+        await context.Response.WriteAsync("Hello World");
+    });
+});
+
+app.Map("/SmartTask-AI", helloApp =>
+{
+    helloApp.Run(async context =>
+    {
+        await context.Response.WriteAsync("App is running fine");
+    });
+});
 
 Console.WriteLine($"🚀 Starting SmartTask AI Assistant API - Environment: {app.Environment.EnvironmentName}");
 Console.WriteLine($"   Time: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
