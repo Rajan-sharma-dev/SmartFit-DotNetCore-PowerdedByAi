@@ -216,56 +216,54 @@ jobs:
         name: .net-app
         path: ./publish
 
-    - name: Deploy to Azure Web App (Production)
-      uses: azure/webapps-deploy@v3
-      with:
-        app-name: ${{ env.AZURE_WEBAPP_NAME }}
-        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_PRODUCTION }}
-        package:  ./publish
-
     - name: Verify production deployment prerequisites
+      env:
+        DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+        JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
       run: |
         echo "🔍 Verifying production deployment prerequisites..."
-        
+
         MISSING_SECRETS=0
-        
-        # Check for required secrets (without exposing their values)
-        if [ -z "${{ secrets.DATABASE_CONNECTION_STRING }}" ]; then
+
+        if [ -z "$DATABASE_CONNECTION_STRING" ]; then
           echo "❌ DATABASE_CONNECTION_STRING is not set"
           MISSING_SECRETS=1
         else
           echo "✅ DATABASE_CONNECTION_STRING is configured"
         fi
-        
-        if [ -z "${{ secrets.JWT_SECRET_KEY }}" ]; then
+
+        if [ -z "$JWT_SECRET_KEY" ]; then
           echo "❌ JWT_SECRET_KEY is not set"
           MISSING_SECRETS=1
         else
           echo "✅ JWT_SECRET_KEY is configured"
         fi
-        
-        if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
+
+        if [ -z "$OPENAI_API_KEY" ]; then
           echo "❌ OPENAI_API_KEY is not set"
           MISSING_SECRETS=1
         else
           echo "✅ OPENAI_API_KEY is configured"
         fi
-        
-        if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ]; then
+
+        if [ -z "$AZURE_CREDENTIALS" ]; then
           echo "❌ AZURE_CREDENTIALS is not set"
           MISSING_SECRETS=1
         else
           echo "✅ AZURE_CREDENTIALS is configured"
         fi
-        
-        if [ $MISSING_SECRETS -eq 1 ]; then
+
+        if [ "$MISSING_SECRETS" -eq 1 ]; then
           echo ""
           echo "❌ Missing required secrets. Please configure them in GitHub repository settings."
           exit 1
         fi
-        
+
         echo ""
         echo "✅ All required secrets are configured"
+
 
     - name: Configure Azure App Service Settings (Production)
       uses: azure/appservice-settings@v1
@@ -405,8 +403,8 @@ jobs:
     steps:
     - name: Notify on deployment success
       if: success()
-      run: echo "? Deployment completed successfully!"
+      run: echo "Deployment completed successfully!"
       
     - name: Notify on deployment failure
       if: failure()
-      run: echo "? Deployment failed!"
+      run: echo "Deployment failed!"
