@@ -107,13 +107,6 @@ jobs:
           echo "✅ STAGING_OPENAI_API_KEY is configured"
         fi
         
-        if [ -z "${{ secrets.AZURE_CREDENTIALS_STAGING }}" ]; then
-          echo "❌ AZURE_CREDENTIALS_STAGING is not set"
-          MISSING_SECRETS=1
-        else
-          echo "✅ AZURE_CREDENTIALS_STAGING is configured"
-        fi
-        
         if [ $MISSING_SECRETS -eq 1 ]; then
           echo ""
           echo "❌ Missing required secrets. Please configure them in GitHub repository settings."
@@ -221,8 +214,10 @@ jobs:
         DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
         JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+        AZURE_WEBAPP_PUBLISH_PROFILE_PRODUCTION: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_PRODUCTION }}
       run: |
+        echo "✅ All required secrets are configured"
+
         echo "🔍 Verifying production deployment prerequisites..."
 
         MISSING_SECRETS=0
@@ -232,6 +227,8 @@ jobs:
           MISSING_SECRETS=1
         else
           echo "✅ DATABASE_CONNECTION_STRING is configured"
+          echo "   ↳ Length: ${#DATABASE_CONNECTION_STRING}"
+          echo "   ↳ Starts with: ${DATABASE_CONNECTION_STRING:0:10}***"
         fi
 
         if [ -z "$JWT_SECRET_KEY" ]; then
@@ -239,6 +236,8 @@ jobs:
           MISSING_SECRETS=1
         else
           echo "✅ JWT_SECRET_KEY is configured"
+          echo "   ↳ Length: ${#JWT_SECRET_KEY}"
+          echo "   ↳ Starts with: ${JWT_SECRET_KEY:0:8}***"
         fi
 
         if [ -z "$OPENAI_API_KEY" ]; then
@@ -246,13 +245,17 @@ jobs:
           MISSING_SECRETS=1
         else
           echo "✅ OPENAI_API_KEY is configured"
+          echo "   ↳ Length: ${#OPENAI_API_KEY}"
+          echo "   ↳ Starts with: ${OPENAI_API_KEY:0:7}***"
         fi
 
-        if [ -z "$AZURE_CREDENTIALS" ]; then
-          echo "❌ AZURE_CREDENTIALS is not set"
+        if [ -z "$AZURE_WEBAPP_PUBLISH_PROFILE_PRODUCTION" ]; then
+          echo "❌ AZURE_WEBAPP_PUBLISH_PROFILE_PRODUCTION is not set"
           MISSING_SECRETS=1
         else
-          echo "✅ AZURE_CREDENTIALS is configured"
+          echo "✅ AZURE_WEBAPP_PUBLISH_PROFILE_PRODUCTION is configured"
+          echo "   ↳ Length: ${#AZURE_WEBAPP_PUBLISH_PROFILE_PRODUCTION}"
+          echo "   ↳ Starts with: ${AZURE_WEBAPP_PUBLISH_PROFILE_PRODUCTION:0:10}***"
         fi
 
         if [ "$MISSING_SECRETS" -eq 1 ]; then
@@ -263,6 +266,7 @@ jobs:
 
         echo ""
         echo "✅ All required secrets are configured"
+
 
 
     - name: Configure Azure App Service Settings (Production)
