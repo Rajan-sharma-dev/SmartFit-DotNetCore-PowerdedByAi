@@ -242,7 +242,7 @@ app.Map("/SmartTask-AI", helloApp =>
     });
 });
 
-app.MapGet("/test-db", (DapperContext db) =>
+app.Map("/test-db", (DapperContext db) =>
 {
     try
     {
