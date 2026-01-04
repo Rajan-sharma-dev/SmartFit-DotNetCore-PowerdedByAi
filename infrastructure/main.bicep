@@ -65,6 +65,7 @@ resource sqlServer 'Microsoft.Sql/servers@2022-05-01-preview' = {
     administratorLogin: sqlAdminLogin
     administratorLoginPassword: sqlAdminPassword
     version: '12.0'
+    publicNetworkAccess: 'Enabled' // Enable public network access
   }
 }
 
@@ -90,6 +91,26 @@ resource sqlServerFirewallRuleAzure 'Microsoft.Sql/servers/firewallRules@2022-05
   properties: {
     startIpAddress: '0.0.0.0'
     endIpAddress: '0.0.0.0'
+  }
+}
+
+// SQL Server Firewall Rule for Development (only in non-production environments)
+resource sqlServerFirewallRuleDev 'Microsoft.Sql/servers/firewallRules@2022-05-01-preview' = if (environment != 'production') {
+  parent: sqlServer
+  name: 'AllowDevelopment'
+  properties: {
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '255.255.255.255'
+  }
+}
+
+// SQL Server Firewall Rule for Production Admin Access (restrictive)
+resource sqlServerFirewallRuleAdmin 'Microsoft.Sql/servers/firewallRules@2022-05-01-preview' = if (environment == 'production') {
+  parent: sqlServer
+  name: 'AllowAdminAccess'
+  properties: {
+    startIpAddress: '0.0.0.0' // Replace with your office/admin IP range
+    endIpAddress: '255.255.255.255' // Replace with your office/admin IP range
   }
 }
 

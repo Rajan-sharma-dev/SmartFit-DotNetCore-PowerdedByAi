@@ -60,7 +60,30 @@ if (string.IsNullOrEmpty(connectionString))
 else
 {
     Console.WriteLine("✅ Database connection string loaded successfully");
-    Console.WriteLine($"   Server: {(connectionString.Contains("localhost") ? "localhost (development)" : "Azure SQL (production)")}");
+    // Better Azure SQL detection
+    var isAzureSql = connectionString.Contains(".database.windows.net");
+    var isLocalhost = connectionString.Contains("localhost");
+    
+    if (isAzureSql)
+    {
+        Console.WriteLine("   🌐 Server: Azure SQL Database");
+        Console.WriteLine("   📡 Note: Ensure firewall rules allow access from Azure App Service");
+        
+        // Extract server name for better diagnostics
+        var serverMatch = System.Text.RegularExpressions.Regex.Match(connectionString, @"Server=tcp:([^,]+)");
+        if (serverMatch.Success)
+        {
+            Console.WriteLine($"   🖥️  Server Name: {serverMatch.Groups[1].Value}");
+        }
+    }
+    else if (isLocalhost)
+    {
+        Console.WriteLine("   🏠 Server: localhost (development)");
+    }
+    else
+    {
+        Console.WriteLine("   🖥️  Server: Remote SQL Server");
+    }
 }
 
 // Configure OpenAI Settings
